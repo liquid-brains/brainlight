@@ -1,14 +1,31 @@
 #! /usr/bin/env ts-node
 
-async function asleep(ms: number) {
-	return(new Promise(resolve => setTimeout(resolve, ms)));
+function sessionStoppedError(): Error {
+	return(new Error('Session stopped.'));
+}
+
+async function asleep(ms: number, signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) {
+		throw(sessionStoppedError());
+	}
+	return(new Promise(function (resolve, reject): void {
+		const timeoutID = setTimeout(function (): void {
+			signal?.removeEventListener('abort', abort);
+			resolve();
+		}, ms);
+		function abort(): void {
+			clearTimeout(timeoutID);
+			reject(sessionStoppedError());
+		}
+		signal?.addEventListener('abort', abort, { once: true });
+	}));
 }
 
 export type VielightRandomParams = {
 	basename?: string;
 	duration: number;
 	freqMin: number;
-	freqMax: number;
+	freqMax?: number;
 	couplingMin?: number;
 	couplingMax?: number;
 	couplingRandomDistribution?: number;
@@ -16,11 +33,78 @@ export type VielightRandomParams = {
 	powerMax?: number;
 }
 
+export type VielightRunRandomOptions = {
+	signal?: AbortSignal;
+};
+
+export type VielightDeviceEventPayloads = {
+	'run-random-start': {
+		fileCount: number;
+	};
+	'run-random-upload-start-file': {
+		fileName: string;
+		fileIndex: number;
+		fileCount: number;
+	};
+	'run-randomupload-finish-file': {
+		fileName: string;
+		fileIndex: number;
+		fileCount: number;
+	};
+	'run-random-run-start-file': {
+		fileName: string;
+		fileIndex: number;
+		fileCount: number;
+	};
+	'run-random-run-finish-file': {
+		fileName: string;
+		fileIndex: number;
+		fileCount: number;
+	};
+};
+
+export type VielightDeviceEventListeners = {
+	[EventName in keyof VielightDeviceEventPayloads]: (event: VielightDeviceEventPayloads[EventName]) => void;
+};
+
+export type VielightDeviceEventName = keyof VielightDeviceEventListeners;
+
 export class VielightDevice {
 	private ip: string;
+	private eventListeners = new Map<VielightDeviceEventName, Map<symbol, unknown>>();
 
 	constructor(args: { ip: string; }) {
 		this.ip = args.ip;
+	}
+
+	on<EventName extends VielightDeviceEventName>(eventName: EventName, listener: VielightDeviceEventListeners[EventName]): symbol {
+		const listenerID = Symbol(eventName);
+		let listeners = this.eventListeners.get(eventName);
+		if (listeners === undefined) {
+			listeners = new Map<symbol, unknown>();
+			this.eventListeners.set(eventName, listeners);
+		}
+		listeners.set(listenerID, listener);
+		return(listenerID);
+	}
+
+	off(listenerID: symbol): void {
+		for (const listeners of this.eventListeners.values()) {
+			if (listeners.delete(listenerID)) {
+				return;
+			}
+		}
+	}
+
+	private emit<EventName extends VielightDeviceEventName>(eventName: EventName, event: VielightDeviceEventPayloads[EventName]): void {
+		const listeners = this.eventListeners.get(eventName);
+		if (listeners === undefined) {
+			return;
+		}
+		for (const listener of listeners.values()) {
+			const typedListener = listener as (event: VielightDeviceEventPayloads[EventName]) => void;
+			typedListener(event);
+		}
 	}
 
 	private async makeRequest(path: string, options?: { jsonResult?: boolean; query?: { [key: string]: string }; }): Promise<unknown> {
@@ -120,24 +204,38 @@ export class VielightDevice {
 		return(true);
 	}
 
-	async runFile(filename: string) {
+	async stop(): Promise<void> {
+		await this.makeRequest('stop', { jsonResult: false, query: { msg: 'Stop button pressed' } });
+	}
+
+	private throwIfStopped(signal?: AbortSignal): void {
+		if (signal?.aborted) {
+			throw(sessionStoppedError());
+		}
+	}
+
+	async runFile(filename: string, options?: VielightRunRandomOptions) {
+		this.throwIfStopped(options?.signal);
 		try {
-			await this.makeRequest('stop', { jsonResult: false, query: { msg: 'Stop button pressed' } });
+			await this.stop();
 		} catch {
 			/* Ignored */
 		}
-		await asleep(100);
+		await asleep(100, options?.signal);
 
+		this.throwIfStopped(options?.signal);
 		await this.makeRequest('filedatarun', { jsonResult: false, query: { data: filename } });
 
-
-		await asleep(100);
+		await asleep(100, options?.signal);
+		this.throwIfStopped(options?.signal);
 		await this.makeRequest('run', { jsonResult: false, query: { msg: 'Run button pressed' } });
 		//await this.makeRequest('runFreq', { jsonResult: false, query: { msg: 'Run button pressed' } });
 
 		let errorCount = 0;
 		let totalErrorCount = 0;
-		for (;; await asleep(1000)) {
+		for (;;) {
+			await asleep(1000, options?.signal);
+			this.throwIfStopped(options?.signal);
 			let statusCode = 'UNK';
 			try {
 				const status = await this.makeRequest('activate', { jsonResult: false, query: { msg: 'Waiting for ending respond' } });
@@ -148,6 +246,7 @@ export class VielightDevice {
 				statusCode = status.slice(0, 3);
 				errorCount = 0;
 			} catch {
+				this.throwIfStopped(options?.signal);
 				errorCount++;
 				totalErrorCount++;
 			}
@@ -166,25 +265,28 @@ export class VielightDevice {
 		}
 	}
 
-	async runFileFromData(filename: string, data: unknown) {
-		/*
-		 * Delete the file before running it
-		 */
-		try {
-			await this.deleteFile(filename);
-		} catch {
-			// Ignored
+	async runFileFromData(filename: string, data: unknown, options?: VielightRunRandomOptions) {
+		const stopDevice = (): void => {
+			void this.stop().catch(function (): void {
+				/* The local run still ends when the device is unreachable. */
+			});
+		};
+		options?.signal?.addEventListener('abort', stopDevice, { once: true });
+		if (options?.signal?.aborted) {
+			stopDevice();
 		}
-
-		/*
-		 * Save the file to the device.
-		 */
-		await this.saveFile(filename, data);
-
-		/*
-		 * Run the file on the device.
-		 */
-		await this.runFile(filename);
+		try {
+			try {
+				await this.deleteFile(filename);
+			} catch {
+				/* Ignored */
+			}
+			this.throwIfStopped(options?.signal);
+			await this.saveFile(filename, data);
+			await this.runFile(filename, options);
+		} finally {
+			options?.signal?.removeEventListener('abort', stopDevice);
+		}
 	}
 
 	private generateRandomParams(filename: string, args: VielightRandomParams) {
@@ -292,43 +394,70 @@ export class VielightDevice {
 		});
 	}
 
-	async runRandom(args: VielightRandomParams) {
+	async runRandom(args: VielightRandomParams, options?: VielightRunRandomOptions) {
+		const stopDevice = (): void => {
+			void this.stop().catch(function (): void {
+				/* The local loop still stops when the device is unreachable. */
+			});
+		};
+		options?.signal?.addEventListener('abort', stopDevice, { once: true });
+		if (options?.signal?.aborted) {
+			stopDevice();
+		}
 		const filenameGenerator = function(minute: number) {
 			return(`${args.basename ?? 'random'}_${minute}.vnp0`);
-		}
-
-		for (let minute = 0; minute < args.duration; minute++) {
-			const filename = filenameGenerator(minute);
-			/*
-			 * Create a file with random parameters and run it on the device.
-			 */
-			const data = this.generateRandomParams(filename, args);
-			try {
-				await this.deleteFile(filename);
-			} catch {
-				/* Ignore */
+		};
+		try {
+			this.throwIfStopped(options?.signal);
+			this.emit('run-random-start', { fileCount: args.duration });
+			for (let minute = 0; minute < args.duration; minute++) {
+				this.throwIfStopped(options?.signal);
+				const filename = filenameGenerator(minute);
+				const fileEvent = { fileName: filename, fileIndex: minute + 1, fileCount: args.duration };
+				this.emit('run-random-upload-start-file', fileEvent);
+				const data = this.generateRandomParams(filename, args);
+				try {
+					await this.deleteFile(filename);
+				} catch {
+					/* Ignore */
+				}
+				this.throwIfStopped(options?.signal);
+				await this.saveFile(filename, data);
+				this.emit('run-randomupload-finish-file', fileEvent);
 			}
-			await this.saveFile(filename, data);
-		}
-
-		console.log('Running...');
-		for (let minute = 0; minute < args.duration; minute++) {
-			const filename = filenameGenerator(minute);
-
-			let runFinished = false;
-			await Promise.race([
-				(async function() {
-					await asleep(65_000);
-					if (!runFinished) {
-						console.log('Timeout reached');
+			console.log('Running...');
+			for (let minute = 0; minute < args.duration; minute++) {
+				this.throwIfStopped(options?.signal);
+				const filename = filenameGenerator(minute);
+				const fileEvent = { fileName: filename, fileIndex: minute + 1, fileCount: args.duration };
+				let runFinished = false;
+				let timeoutID: ReturnType<typeof setTimeout> | undefined;
+				try {
+					await Promise.race([
+						new Promise<void>(function (resolve): void {
+							timeoutID = setTimeout(function (): void {
+								resolve();
+							}, 65_000);
+						}).then(function (): void {
+							if (!runFinished) {
+								console.log('Timeout reached');
+							}
+						}),
+						(async () => {
+							this.emit('run-random-run-start-file', fileEvent);
+							await this.runFile(filename, options);
+							runFinished = true;
+							this.emit('run-random-run-finish-file', fileEvent);
+						})()
+					]);
+				} finally {
+					if (timeoutID !== undefined) {
+						clearTimeout(timeoutID);
 					}
-				})(),
-				(async () => {
-					await this.runFile(filename);
-					runFinished = true;
-				})()
-			]);
+				}
+			}
+		} finally {
+			options?.signal?.removeEventListener('abort', stopDevice);
 		}
 	}
 }
-

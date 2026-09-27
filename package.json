@@ -1,13 +1,14 @@
 {
   "name": "brainlight",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Library for interacting with various brain-light devices",
   "license": "ISC",
   "author": "Roy Keene <npm@rkeene.org>",
   "type": "module",
   "main": "index.js",
   "scripts": {
-     "tsc": "tsc"
+     "tsc": "tsc",
+     "test": "tsx --test src/lib/neuropro/index.test.ts"
   },
   "devDependencies": {
     "@types/node": "26.6.3",

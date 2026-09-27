@@ -96,17 +96,29 @@ function parseArgs(args: string[]): VielightCLIArgs {
 					i++;
 					const freqParts = nonEmptyString(args[i]).split('/');
 					if (freqParts.length === 1) {
-						const [min, max] = nonEmptyString(freqParts[0]).split('...').map(parseIntSafe);
-						runRandomArgs.freqMin = nonEmptyNumber(min);
-						runRandomArgs.freqMax = nonEmptyNumber(max);
+						const frequencyRange = nonEmptyString(freqParts[0]).split('...');
+						if (frequencyRange.length < 1 || frequencyRange.length > 2) {
+							throw(new Error('Invalid format for --freq argument'));
+						}
+						runRandomArgs.freqMin = parseIntSafe(frequencyRange[0]);
+						if (frequencyRange[1] !== undefined) {
+							runRandomArgs.freqMax = parseIntSafe(frequencyRange[1]);
+						}
 					} else if (freqParts.length === 2) {
 						const [freqMinStr, freqMaxStr] = freqParts;
-						const [freqMin, freqMax] = nonEmptyString(freqMinStr).split('...').map(parseIntSafe);
-						const [couplingMin, couplingMax] = nonEmptyString(freqMaxStr).split('...').map(parseIntSafe);
-						runRandomArgs.freqMin = nonEmptyNumber(freqMin);
-						runRandomArgs.freqMax = nonEmptyNumber(freqMax);
-						runRandomArgs.couplingMin = nonEmptyNumber(couplingMin);
-						runRandomArgs.couplingMax = nonEmptyNumber(couplingMax, runRandomArgs.couplingMin);
+						const frequencyRange = nonEmptyString(freqMinStr).split('...');
+						const couplingRange = nonEmptyString(freqMaxStr).split('...');
+						if (frequencyRange.length < 1 || frequencyRange.length > 2 || couplingRange.length < 1 || couplingRange.length > 2) {
+							throw(new Error('Invalid format for --freq argument'));
+						}
+						runRandomArgs.freqMin = parseIntSafe(frequencyRange[0]);
+						if (frequencyRange[1] !== undefined) {
+							runRandomArgs.freqMax = parseIntSafe(frequencyRange[1]);
+						}
+						runRandomArgs.couplingMin = parseIntSafe(couplingRange[0]);
+						if (couplingRange[1] !== undefined) {
+							runRandomArgs.couplingMax = parseIntSafe(couplingRange[1]);
+						}
 					} else {
 						throw new Error('Invalid format for --freq argument');
 					}
@@ -130,7 +142,7 @@ function parseArgs(args: string[]): VielightCLIArgs {
 				i++;
 			}
 
-			if (!runRandomArgs.duration || !runRandomArgs.freqMin || !runRandomArgs.freqMax || !runRandomArgs.powerMin || !runRandomArgs.powerMax) {
+			if (!runRandomArgs.duration || !runRandomArgs.freqMin || !runRandomArgs.powerMin) {
 				throw(new Error('Missing required arguments for runRandom command'));
 			}
 
@@ -225,7 +237,7 @@ async function main(inputArgs: string[]) {
 			console.log('  save <filename>      Save a file to the device');
 			console.log('  delete <filename>    Delete a file from the device');
 			console.log('  run <filenames...>   Run a sequence of files on the device');
-			console.log('  runRandom [--basename <string>] --duration <minutes> --freq <freqMin...freqMax>[/<couplingMin...couplingMax>] [--coupling-on-distribution <0...100>] --power <min[...max]>     Run a random sequence of files on the device');
+			console.log('  runRandom [--basename <string>] --duration <minutes> --freq <freqMin[...freqMax]>[/<couplingMin[...couplingMax]>] [--coupling-on-distribution <0...100>] --power <min[...max]>     Run a random sequence of files on the device');
 			break;
 	}
 }
