@@ -33,7 +33,7 @@ export type VielightRandomParams = {
 	powerMax?: number;
 }
 
-export type VielightRunRandomOptions = {
+export type VielightRunOptions = {
 	signal?: AbortSignal;
 };
 
@@ -71,10 +71,12 @@ export type VielightDeviceEventName = keyof VielightDeviceEventListeners;
 
 export class VielightDevice {
 	private ip: string;
+	private logger?: Pick<typeof console, 'log' | 'error'> | undefined;
 	private eventListeners = new Map<VielightDeviceEventName, Map<symbol, unknown>>();
 
-	constructor(args: { ip: string; }) {
+	constructor(args: { ip: string; logger?: Pick<typeof console, 'log' | 'error'>; }) {
 		this.ip = args.ip;
+		this.logger = args.logger;
 	}
 
 	on<EventName extends VielightDeviceEventName>(eventName: EventName, listener: VielightDeviceEventListeners[EventName]): symbol {
@@ -115,7 +117,7 @@ export class VielightDevice {
 			}
 		}
 
-		console.log(`Making request to ${url.toString()}`);
+		this.logger?.log(`Making request to ${url.toString()}`);
 
 		const response = await fetch(url);
 
@@ -214,7 +216,7 @@ export class VielightDevice {
 		}
 	}
 
-	async runFile(filename: string, options?: VielightRunRandomOptions) {
+	async runFile(filename: string, options?: VielightRunOptions) {
 		this.throwIfStopped(options?.signal);
 		try {
 			await this.stop();
@@ -260,12 +262,12 @@ export class VielightDevice {
 			} else if (statusCode === 'SPT') {
 				break;
 			} else {
-				console.log(`Unknown status code: ${statusCode}`);
+				this.logger?.log(`Unknown status code: ${statusCode}`);
 			}
 		}
 	}
 
-	async runFileFromData(filename: string, data: unknown, options?: VielightRunRandomOptions) {
+	async runFileFromData(filename: string, data: unknown, options?: VielightRunOptions) {
 		const stopDevice = (): void => {
 			void this.stop().catch(function (): void {
 				/* The local run still ends when the device is unreachable. */
@@ -289,7 +291,7 @@ export class VielightDevice {
 		}
 	}
 
-	private generateRandomParams(filename: string, args: VielightRandomParams) {
+	static generateRandomParams(filename: string, args: VielightRandomParams) {
 		const randomValue = function(min: number, max?: number): number {
 			if (max === undefined) {
 				return(min);
@@ -394,7 +396,7 @@ export class VielightDevice {
 		});
 	}
 
-	async runRandom(args: VielightRandomParams, options?: VielightRunRandomOptions) {
+	async runRandom(args: VielightRandomParams, options?: VielightRunOptions) {
 		const stopDevice = (): void => {
 			void this.stop().catch(function (): void {
 				/* The local loop still stops when the device is unreachable. */
@@ -415,7 +417,7 @@ export class VielightDevice {
 				const filename = filenameGenerator(minute);
 				const fileEvent = { fileName: filename, fileIndex: minute + 1, fileCount: args.duration };
 				this.emit('run-random-upload-start-file', fileEvent);
-				const data = this.generateRandomParams(filename, args);
+				const data = VielightDevice.generateRandomParams(filename, args);
 				try {
 					await this.deleteFile(filename);
 				} catch {
@@ -425,7 +427,8 @@ export class VielightDevice {
 				await this.saveFile(filename, data);
 				this.emit('run-randomupload-finish-file', fileEvent);
 			}
-			console.log('Running...');
+
+			this.logger?.log('Running...');
 			for (let minute = 0; minute < args.duration; minute++) {
 				this.throwIfStopped(options?.signal);
 				const filename = filenameGenerator(minute);
@@ -434,14 +437,13 @@ export class VielightDevice {
 				let timeoutID: ReturnType<typeof setTimeout> | undefined;
 				try {
 					await Promise.race([
-						new Promise<void>(function (resolve): void {
-							timeoutID = setTimeout(function (): void {
+						new Promise<void>((resolve) => {
+							timeoutID = setTimeout(() => {
+								if (!runFinished) {
+									this.logger?.log('Timeout reached');
+								}
 								resolve();
 							}, 65_000);
-						}).then(function (): void {
-							if (!runFinished) {
-								console.log('Timeout reached');
-							}
 						}),
 						(async () => {
 							this.emit('run-random-run-start-file', fileEvent);

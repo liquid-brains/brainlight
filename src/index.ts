@@ -195,9 +195,7 @@ async function runRandom(device: Vielight.VielightDevice, args: Vielight.Vieligh
 }
 
 async function previewRandom(args: Vielight.VielightRandomParams) {
-	const device = new Vielight.VielightDevice({ ip: '127.0.0.1' });
-
-	const data = device['generateRandomParams']('preview', args);
+	const data = Vielight.VielightDevice.generateRandomParams('preview', args);
 	console.log(JSON.stringify(data, undefined, 8));
 }
 
