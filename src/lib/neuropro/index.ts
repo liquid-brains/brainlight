@@ -35,6 +35,7 @@ export type VielightRandomParams = {
 
 export type VielightRunOptions = {
 	signal?: AbortSignal;
+	waitForCompletion?: boolean;
 };
 
 export type VielightDeviceEventPayloads = {
@@ -69,14 +70,28 @@ export type VielightDeviceEventListeners = {
 
 export type VielightDeviceEventName = keyof VielightDeviceEventListeners;
 
+type VielightDeviceArgs = {
+	ip: string;
+	/** default: no logger */
+	logger?: Pick<typeof console, 'log' | 'error'>;
+	/** default: fetch. If provided, this function will be used to make HTTP requests to the device. */
+	fetch?: (input: URL) => Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<unknown>; }>;
+	/** default: true. If false, the fetch function is assumed to not return any data, and the makeRequest function will not attempt to read the response body. */
+	fetchCanReturnData?: boolean;
+};
+
 export class VielightDevice {
-	private ip: string;
-	private logger?: Pick<typeof console, 'log' | 'error'> | undefined;
+	private ip: VielightDeviceArgs['ip'];
+	private logger?: VielightDeviceArgs['logger'] | undefined;
+	private fetch: NonNullable<VielightDeviceArgs['fetch']>;
+	private fetchCanReturnData: NonNullable<VielightDeviceArgs['fetchCanReturnData']>;
 	private eventListeners = new Map<VielightDeviceEventName, Map<symbol, unknown>>();
 
-	constructor(args: { ip: string; logger?: Pick<typeof console, 'log' | 'error'>; }) {
+	constructor(args: VielightDeviceArgs) {
 		this.ip = args.ip;
 		this.logger = args.logger;
+		this.fetch = args.fetch ?? fetch;
+		this.fetchCanReturnData = args.fetchCanReturnData ?? true;
 	}
 
 	on<EventName extends VielightDeviceEventName>(eventName: EventName, listener: VielightDeviceEventListeners[EventName]): symbol {
@@ -109,8 +124,12 @@ export class VielightDevice {
 		}
 	}
 
-	private async makeRequest(path: string, options?: { jsonResult?: boolean; query?: { [key: string]: string }; }): Promise<unknown> {
+	private async makeRequest(path: string, options?: { examineResult?: boolean; jsonResult?: boolean; query?: { [key: string]: string }; }): Promise<unknown> {
 		const url = new URL(`http://${this.ip}/${path}`);
+		options = { ...options };
+		options.examineResult = options.examineResult ?? true;
+		options.jsonResult = options.jsonResult ?? true;
+
 		if (options?.query) {
 			for (const [key, value] of Object.entries(options.query)) {
 				url.searchParams.append(key, value);
@@ -119,17 +138,26 @@ export class VielightDevice {
 
 		this.logger?.log(`Making request to ${url.toString()}`);
 
-		const response = await fetch(url);
+		const response = await this.fetch(url);
 
 		if (!response.ok) {
 			throw(new Error(`Request failed with status ${response.status}: ${await response.text()}`));
 		}
 
-		if (options?.jsonResult === false) {
-			return(await response.text());
+		if (!options.examineResult) {
+			return(null);
 		}
 
-		return(await response.json());
+		if (!this.fetchCanReturnData) {
+			throw(new Error('Cannot examine result because fetch cannot return data'));
+		}
+
+		if (options.jsonResult) {
+			return(await response.json());
+		}
+
+		return(await response.text());
+
 	}
 
 	async listFiles(limit?: 'vnp0' | 'vnp2'): Promise<string[]> {
@@ -167,18 +195,18 @@ export class VielightDevice {
 	}
 
 	private async saveFileNew(filename: string, data: unknown) {
-		await this.makeRequest('filename', { jsonResult: false, query: { data: filename } });
-		await this.makeRequest('savenewfile', { jsonResult: false, query: { data: JSON.stringify(data) } });
+		await this.makeRequest('filename', { examineResult: false, query: { data: filename } });
+		await this.makeRequest('savenewfile', { examineResult: false, query: { data: JSON.stringify(data) } });
 
 		const filelist = await this.listFiles('vnp0');
-		await this.makeRequest('updatelistfile', { jsonResult: false, query: { data: JSON.stringify(filelist) } });
+		await this.makeRequest('updatelistfile', { examineResult: false, query: { data: JSON.stringify(filelist) } });
 
 		return(true);
 	}
 
 	private async saveFileOverwrite(filename: string, data: unknown) {
-		await this.makeRequest('filename', { jsonResult: false, query: { data: filename } });
-		await this.makeRequest('datafileExisting', { jsonResult: false, query: { data: JSON.stringify(data) } });
+		await this.makeRequest('filename', { examineResult: false, query: { data: filename } });
+		await this.makeRequest('datafileExisting', { examineResult: false, query: { data: JSON.stringify(data) } });
 
 		return(true);
 	}
@@ -201,13 +229,13 @@ export class VielightDevice {
 	}
 
 	async deleteFile(filename: string) {
-		await this.makeRequest('deletefile', { jsonResult: false, query: { data: filename } });
+		await this.makeRequest('deletefile', { examineResult: false, query: { data: filename } });
 
 		return(true);
 	}
 
 	async stop(): Promise<void> {
-		await this.makeRequest('stop', { jsonResult: false, query: { msg: 'Stop button pressed' } });
+		await this.makeRequest('stop', { examineResult: false, query: { msg: 'Stop button pressed' } });
 	}
 
 	private throwIfStopped(signal?: AbortSignal): void {
@@ -217,6 +245,9 @@ export class VielightDevice {
 	}
 
 	async runFile(filename: string, options?: VielightRunOptions) {
+		options = { ...options };
+		options.waitForCompletion = options.waitForCompletion ?? true;
+
 		this.throwIfStopped(options?.signal);
 		try {
 			await this.stop();
@@ -226,12 +257,16 @@ export class VielightDevice {
 		await asleep(100, options?.signal);
 
 		this.throwIfStopped(options?.signal);
-		await this.makeRequest('filedatarun', { jsonResult: false, query: { data: filename } });
+		await this.makeRequest('filedatarun', { examineResult: false, query: { data: filename } });
 
 		await asleep(100, options?.signal);
 		this.throwIfStopped(options?.signal);
-		await this.makeRequest('run', { jsonResult: false, query: { msg: 'Run button pressed' } });
+		await this.makeRequest('run', { examineResult: false, query: { msg: 'Run button pressed' } });
 		//await this.makeRequest('runFreq', { jsonResult: false, query: { msg: 'Run button pressed' } });
+
+		if (!options.waitForCompletion) {
+			return;
+		}
 
 		let errorCount = 0;
 		let totalErrorCount = 0;
@@ -248,10 +283,10 @@ export class VielightDevice {
 				statusCode = status.slice(0, 3);
 				errorCount = 0;
 			} catch {
-				this.throwIfStopped(options?.signal);
 				errorCount++;
 				totalErrorCount++;
 			}
+			this.throwIfStopped(options?.signal);
 
 			if (errorCount > 5 || totalErrorCount > 10) {
 				throw(new Error('Device not responding'));
@@ -447,7 +482,10 @@ export class VielightDevice {
 						}),
 						(async () => {
 							this.emit('run-random-run-start-file', fileEvent);
-							await this.runFile(filename, options);
+							await this.runFile(filename, {
+								...options,
+								waitForCompletion: true
+							});
 							runFinished = true;
 							this.emit('run-random-run-finish-file', fileEvent);
 						})()
