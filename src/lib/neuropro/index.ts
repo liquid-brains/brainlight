@@ -21,7 +21,7 @@ async function asleep(ms: number, signal?: AbortSignal): Promise<void> {
 	}));
 }
 
-function isBatchFile(filename: string): boolean {
+function isBatchFile(filename: string, data?: unknown): boolean {
 	/*
 	 * Determine if we should fetch a batch file (vnp3/vnp4) or a
 	 * single file (vnp0/vnp1/vnp2)
@@ -30,6 +30,27 @@ function isBatchFile(filename: string): boolean {
 	let isBatch = false;
 	if (filename.match(/\.vnp[34]$/)) {
 		isBatch = true;
+	}
+
+	/*
+	 * Verify that the contents match the isBatch determination if
+	 * we have them
+	 */
+	if (data !== undefined) {
+		if (typeof data !== 'object' || data === null) {
+			throw(new Error('invalid data: not an object'));
+		}
+		if (!('single' in data)) {
+			throw(new Error('invalid data: no "single"'));
+		}
+
+		if (typeof data.single !== 'boolean') {
+			throw(new Error('invalid data: "single" is not a boolean'));
+		}
+
+		if (data.single && isBatch) {
+			throw(new Error('invalid data: "single" is true but filename indicates batch file'));
+		}
 	}
 
 	return(isBatch);
@@ -272,6 +293,23 @@ export class VielightDevice {
 			 */
 		}
 
+		if (typeof data !== 'object' || data === null) {
+			return(true);
+		}
+
+		if (!('filenames' in data) || !Array.isArray(data.filenames)) {
+			return(true);
+		}
+
+		for (const filename of data.filenames) {
+			if (typeof filename !== 'string' || filename === '') {
+				continue;
+			}
+
+			await this.makeRequest('usedBatchFileTrue', { examineResult: false, query: { data: filename } });
+		}
+
+
 		return(true);
 	}
 
@@ -294,7 +332,7 @@ export class VielightDevice {
 
 		data.filename = filename.replace(/\.vnp[0-9]$/, '');
 
-		if (isBatchFile(filename)) {
+		if (isBatchFile(filename, data)) {
 			try {
 				await this.saveBatchFileNew(filename, data);
 			} catch {
