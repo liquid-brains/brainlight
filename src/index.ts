@@ -46,7 +46,10 @@ function parseIntSafe(value: string | undefined | null): number {
 }
 
 type VielightCLIArgs = {
-	command: 'list' | 'help'
+	command: 'help'
+} | {
+	command: 'list';
+	kinds: Set<'single' | 'batch'>;
 } | {
 	command: 'get' | 'save' | 'delete';
 	filename: string;
@@ -65,9 +68,25 @@ function parseArgs(args: string[]): VielightCLIArgs {
 	const command = args[0] as VielightCLIArgs['command'];
 
 	switch (command) {
-		case 'list':
 		case 'help':
 			return({ command: command });
+		case 'list':
+			let kinds = new Set<'single' | 'batch'>();
+
+			for (const arg of args.slice(1)) {
+				if (arg === '--single') {
+					kinds.add('single');
+				} else if (arg === '--batch') {
+					kinds.add('batch');
+				} else {
+					throw new Error(`Unknown argument: ${arg}`);
+				}
+			}
+
+			return({
+				command: command,
+				kinds: kinds
+			});
 		case 'get':
 		case 'save':
 		case 'delete':
@@ -160,8 +179,20 @@ function parseArgs(args: string[]): VielightCLIArgs {
 	}
 }
 
-async function listFiles(device: Vielight.VielightDevice) {
-	const files = await device.listFiles();
+async function listFiles(device: Vielight.VielightDevice, kinds: Set<'single' | 'batch'>) {
+	let limitKinds: undefined | Parameters<typeof device.listFiles>[0] = undefined;
+	if (kinds.size > 0) {
+		if (kinds.has('single')) {
+			limitKinds ??= [];
+			limitKinds.push('vnp0');
+			limitKinds.push('vnp2');
+		}
+		if (kinds.has('batch')) {
+			limitKinds ??= [];
+			limitKinds.push('vnp3');
+		}
+	}
+	const files = await device.listFiles(limitKinds);
 	console.log('Files:');
 
 	for (const file of files) {
@@ -200,13 +231,13 @@ async function previewRandom(args: Vielight.VielightRandomParams) {
 }
 
 async function main(inputArgs: string[]) {
-	const device = new Vielight.VielightDevice({ ip: '192.168.0.58' });
+	const device = new Vielight.VielightDevice({ ip: '192.168.0.58', logger: console });
 
 	const args = parseArgs(inputArgs);
 
 	switch (args.command) {
 		case 'list':
-			await listFiles(device);
+			await listFiles(device, args.kinds);
 			break;
 		case 'get':
 			await getFile(device, args.filename);
@@ -230,11 +261,11 @@ async function main(inputArgs: string[]) {
 		case 'help':
 		default:
 			console.log('Usage:');
-			console.log('  list                 List all files on the device');
-			console.log('  get <filename>       Get a file from the device');
-			console.log('  save <filename>      Save a file to the device');
-			console.log('  delete <filename>    Delete a file from the device');
-			console.log('  run <filenames...>   Run a sequence of files on the device');
+			console.log('  list [--single] [--batch]   List all files on the device');
+			console.log('  get <filename>              Get a file from the device');
+			console.log('  save <filename>             Save a file to the device');
+			console.log('  delete <filename>           Delete a file from the device');
+			console.log('  run <filenames...>          Run a sequence of files on the device');
 			console.log('  runRandom [--basename <string>] --duration <minutes> --freq <freqMin[...freqMax]>[/<couplingMin[...couplingMax]>] [--coupling-on-distribution <0...100>] --power <min[...max]>     Run a random sequence of files on the device');
 			break;
 	}

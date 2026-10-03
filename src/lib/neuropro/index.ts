@@ -21,6 +21,20 @@ async function asleep(ms: number, signal?: AbortSignal): Promise<void> {
 	}));
 }
 
+function isBatchFile(filename: string): boolean {
+	/*
+	 * Determine if we should fetch a batch file (vnp3/vnp4) or a
+	 * single file (vnp0/vnp1/vnp2)
+	 */
+
+	let isBatch = false;
+	if (filename.match(/\.vnp[34]$/)) {
+		isBatch = true;
+	}
+
+	return(isBatch);
+}
+
 export type VielightRandomParams = {
 	basename?: string;
 	duration: number;
@@ -160,17 +174,38 @@ export class VielightDevice {
 
 	}
 
-	async listFiles(limit?: 'vnp0' | 'vnp2'): Promise<string[]> {
+	async listFiles(limit?: 'vnp0' | 'vnp2' | 'vnp3' | ('vnp0' | 'vnp2' | 'vnp3')[]): Promise<string[]> {
 		let resultRaw0: unknown = [];
 		let resultRaw1: unknown = [];
-		if (limit === undefined || limit === 'vnp0') {
-			resultRaw0 = await this.makeRequest('getlistfile', { query: { msg: 'vnp0' } });
-		}
-		if (limit === undefined || limit === 'vnp2') {
-			resultRaw1 = await this.makeRequest('getlistfile', { query: { msg: 'vnp2' } });
+		let resultRaw2: unknown = [];
+
+		function has(kind: 'vnp0' | 'vnp2' | 'vnp3'): boolean {
+			if (limit === undefined) {
+				if (kind === 'vnp3') {
+					return(false);
+				}
+				return(true);
+			}
+			if (typeof limit === 'string') {
+				return(limit === kind);
+			}
+			if (Array.isArray(limit)) {
+				return(limit.includes(kind));
+			}
+			throw(new Error('Unexpected limit type'));
 		}
 
-		if (!Array.isArray(resultRaw0) || !Array.isArray(resultRaw1)) {
+		if (has('vnp0')) {
+			resultRaw0 = await this.makeRequest('getlistfile', { query: { msg: 'vnp0' } });
+		}
+		if (has('vnp2')) {
+			resultRaw1 = await this.makeRequest('getlistfile', { query: { msg: 'vnp2' } });
+		}
+		if (has('vnp3')) {
+			resultRaw2 = await this.makeRequest('getlistbatchfile', { query: { msg: 'get listbatchfile' } });
+		}
+
+		if (!Array.isArray(resultRaw0) || !Array.isArray(resultRaw1) || !Array.isArray(resultRaw2)) {
 			throw new Error('Unexpected response format');
 		}
 
@@ -182,24 +217,37 @@ export class VielightDevice {
 		};
 		const result0 = resultRaw0.filter(filter);
 		const result1 = resultRaw1.filter(filter);
+		const result2 = resultRaw2.filter(filter);
 
-		const result = [...result0, ...result1];
+		const result = [...result0, ...result1, ...result2];
 
 		return(result);
 	}
 
 	async getFile(filename: string) {
-		const data = await this.makeRequest('filedata', { query: { data: filename } });
+		if (!isBatchFile(filename)) {
+			const data = await this.makeRequest('filedata', { query: { data: filename } });
 
-		return(data);
+			return(data);
+		} else {
+			const data = await this.makeRequest('batchfiledata', { query: { data: filename } });
+
+			return(data);
+		}
 	}
 
 	private async saveFileNew(filename: string, data: unknown) {
 		await this.makeRequest('filename', { examineResult: false, query: { data: filename } });
 		await this.makeRequest('savenewfile', { examineResult: false, query: { data: JSON.stringify(data) } });
 
-		const filelist = await this.listFiles('vnp0');
-		await this.makeRequest('updatelistfile', { examineResult: false, query: { data: JSON.stringify(filelist) } });
+		try {
+			const filelist = await this.listFiles('vnp0');
+			await this.makeRequest('updatelistfile', { examineResult: false, query: { data: JSON.stringify(filelist) } });
+		} catch {
+			/*
+			 * Ignore errors in case we can't list files
+			 */
+		}
 
 		return(true);
 	}
@@ -211,7 +259,32 @@ export class VielightDevice {
 		return(true);
 	}
 
-	async saveFile(filename: string, data: unknown) {
+	private async saveBatchFileNew(filename: string, data: unknown) {
+		await this.makeRequest('batchfilename', { examineResult: false, query: { data: filename } });
+		await this.makeRequest('savenewbatchfile', { examineResult: false, query: { data: JSON.stringify(data) } });
+
+		try {
+			const filelist = await this.listFiles('vnp3');
+			await this.makeRequest('updatelistbatchfile', { examineResult: false, query: { data: JSON.stringify(filelist) } });
+		} catch {
+			/*
+			 * Ignore errors in case we can't list files
+			 */
+		}
+
+		return(true);
+	}
+
+	private async saveBatchFileOverwrite(filename: string, data: unknown) {
+		await this.makeRequest('batchfilename', { examineResult: false, query: { data: filename } });
+		await this.makeRequest('batchdatafileExisting', { examineResult: false, query: { data: JSON.stringify(data) } });
+/* XXX:TODO: Should we usedBatchFileFalse?data=<filename>   for any files removed ?   We can't always read the old value */
+/* XXX:TODO: Should we usedBatchFileTrue?data=<filename>   for any files added ?   We can't always read the old value */
+
+		return(true);
+	}
+
+	async saveFile(filename: string, data: unknown, force = false) {
 		if (typeof data !== 'object' || data === null) {
 			throw(new Error('invalid data: not an object'));
 		}
@@ -221,17 +294,60 @@ export class VielightDevice {
 
 		data.filename = filename.replace(/\.vnp[0-9]$/, '');
 
+		if (isBatchFile(filename)) {
+			try {
+				await this.saveBatchFileNew(filename, data);
+			} catch {
+				force = true;
+			}
+
+			if (force) {
+				await this.saveBatchFileOverwrite(filename, data);
+			}
+
+			return;
+		}
+
 		try {
 			await this.saveFileNew(filename, data);
 		} catch {
+			force = true;
+		}
+
+		if (force) {
 			await this.saveFileOverwrite(filename, data);
 		}
+
+		return(true);
 	}
 
-	async deleteFile(filename: string) {
+	private async deleteSingleFile(filename: string) {
 		await this.makeRequest('deletefile', { examineResult: false, query: { data: filename } });
 
 		return(true);
+	}
+
+	private async deleteBatchFile(filename: string) {
+		await this.makeRequest('deletebatchModule', { examineResult: false, query: { data: filename } });
+
+		try {
+			const filelist = await this.listFiles('vnp3');
+			await this.makeRequest('updatelistbatchfile', { examineResult: false, query: { data: JSON.stringify(filelist) } });
+		} catch {
+			/*
+			 * Ignore errors in case we can't list files
+			 */
+		}
+
+		return(true);
+	}
+
+	async deleteFile(filename: string) {
+		if (isBatchFile(filename)) {
+			return(await this.deleteBatchFile(filename));
+		}
+
+		return(await this.deleteSingleFile(filename));
 	}
 
 	async stop(): Promise<void> {
