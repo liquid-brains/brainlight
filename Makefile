@@ -23,14 +23,14 @@ test: node_modules
 	npm test
 
 do-npm-pack: dist
-	rm -f dist/brainlight-*.tgz
+	rm -f dist/liquid-brains-brainlight-*.tgz
 	cd dist && npm pack
-	tar -ztf dist/brainlight-*.tgz
-	mv dist/brainlight-*.tgz .
+	tar -ztf dist/liquid-brains-brainlight-*.tgz
+	mv dist/liquid-brains-brainlight-*.tgz .
 
 clean:
 	rm -rf dist
-	rm -f brainlight-*.tgz
+	rm -f liquid-brains-brainlight-*.tgz
 
 distclean: clean
 	rm -rf node_modules
