@@ -126,7 +126,9 @@ export class VielightDevice {
 	constructor(args: VielightDeviceArgs) {
 		this.ip = args.ip;
 		this.logger = args.logger;
-		this.fetch = args.fetch ?? fetch;
+		this.fetch = args.fetch ?? async function(url) {
+			return(await fetch(url));
+		};
 		this.fetchCanReturnData = args.fetchCanReturnData ?? true;
 	}
 
