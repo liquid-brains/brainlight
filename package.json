@@ -1,21 +1,25 @@
 {
-  "name": "@liquid-brains/brainlight",
-  "version": "1.0.2",
-  "description": "Library for interacting with various brain-light devices",
-  "license": "ISC",
-  "author": "Roy Keene <npm@rkeene.org>",
-  "type": "module",
-  "main": "index.js",
-  "scripts": {
-     "tsc": "tsc",
-     "test": "tsx --test src/lib/neuropro/index.test.ts"
-  },
-  "devDependencies": {
-    "@types/node": "26.6.3",
-    "tsx": "4.23.15",
-    "typescript": "7.0.2"
-  },
-  "allowScripts": {
-    "esbuild@0.28.2": true
-  }
+	"name": "@liquid-brains/brainlight",
+	"version": "1.0.3",
+	"repository": {
+		"type": "git",
+		"url": "git@github.com:liquid-brains/brainlight.git"
+	},
+	"description": "Library for interacting with various brain-light devices",
+	"license": "ISC",
+	"author": "Roy Keene <npm@rkeene.org>",
+	"type": "module",
+	"main": "index.js",
+	"scripts": {
+		"tsc": "tsc",
+		"test": "tsx --test src/lib/neuropro/index.test.ts"
+	},
+	"devDependencies": {
+		"@types/node": "26.6.3",
+		"tsx": "4.23.15",
+		"typescript": "7.0.2"
+	},
+	"allowScripts": {
+		"esbuild@0.28.2": true
+	}
 }
