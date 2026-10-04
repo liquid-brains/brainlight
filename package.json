@@ -1,6 +1,6 @@
 {
-  "name": "brainlight",
-  "version": "1.0.1",
+  "name": "@liquid-brains/brainlight",
+  "version": "1.0.2",
   "description": "Library for interacting with various brain-light devices",
   "license": "ISC",
   "author": "Roy Keene <npm@rkeene.org>",
