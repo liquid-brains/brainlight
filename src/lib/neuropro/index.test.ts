@@ -106,7 +106,8 @@ test('runRandom reports upload and run events and removes listeners', async func
 		assert.equal(event.fileIndex, 1);
 		reportedEvents.push('run-random-upload-start-file');
 	});
-	device.on('run-randomupload-finish-file', function (): void {
+	device.on('run-randomupload-finish-file', function (event): void {
+		assert.equal(event.data.modules instanceof Array, true);
 		reportedEvents.push('run-randomupload-finish-file');
 	});
 	device.on('run-random-run-start-file', function (): void {

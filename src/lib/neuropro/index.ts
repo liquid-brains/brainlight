@@ -86,6 +86,7 @@ export type VielightDeviceEventPayloads = {
 		fileName: string;
 		fileIndex: number;
 		fileCount: number;
+		data: Record<string, unknown>;
 	};
 	'run-random-run-start-file': {
 		fileName: string;
@@ -614,7 +615,7 @@ export class VielightDevice {
 				}
 				this.throwIfStopped(options?.signal);
 				await this.saveFile(filename, data);
-				this.emit('run-randomupload-finish-file', fileEvent);
+				this.emit('run-randomupload-finish-file', { ...fileEvent, data: data });
 			}
 
 			this.logger?.log('Running...');
