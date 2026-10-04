@@ -58,14 +58,55 @@ function isBatchFile(filename: string, data?: unknown): boolean {
 
 export type VielightRandomParams = {
 	basename?: string;
+	/**
+	 * Duration of this journey (in minutes)
+	 */
 	duration: number;
-	freqMin: number;
-	freqMax?: number;
-	couplingMin?: number;
-	couplingMax?: number;
-	couplingRandomDistribution?: number;
-	powerMin: number;
-	powerMax?: number;
+	frequency: {
+		ranges: {
+			/**
+			 * Minimum frequency to use within the session
+			 */
+			min: number;
+			/**
+			 * Maximum frequency to use within the session (default: same as min)
+			 */
+			max?: number;
+		}[];
+
+		/**
+		 * Whether to generate a random frequency per-channel (true) or per session (e.g., minute) (false; default)
+		 */
+		perChannel?: boolean;
+	};
+	coupling?: {
+		/**
+		 * Cross-channel coupling minimum frequency to use within the session
+		 */
+		min: number;
+		/**
+		 * Cross-channel coupling minimum frequency to use within the session
+		 */
+		max?: number;
+		/**
+		 * Frequency distribution between cross-channel coupling and no cross-channel coupling (default: 50, meaning 50%)
+		 */
+		distribution?: number;
+	};
+	power: {
+		/**
+		 * Minimum power to use within the session
+		 */
+		min: number;
+		/**
+		 * Maximum power to use within the session (default: same as min)
+		 */
+		max?: number;
+		/**
+		 * Whether to generate a random power per-channel (true; default) or per session (e.g., minute) (false)
+		 */
+		perChannel?: boolean;
+	};
 }
 
 export type VielightRunOptions = {
@@ -484,6 +525,9 @@ export class VielightDevice {
 	}
 
 	static generateRandomParams(filename: string, args: VielightRandomParams) {
+		args.power.perChannel ??= true;
+		args.frequency.perChannel ??= false;
+
 		const randomValue = function(min: number, max?: number): number {
 			if (max === undefined) {
 				return(min);
@@ -516,11 +560,42 @@ export class VielightDevice {
 			return(choices[choices.length - 1]!);
 		}
 
-		const frequency = randomValue(args.freqMin, args.freqMax);
+		const randomFrequency = function(ranges: { min: number; max?: number; }[]): number {
+			if (ranges.length === 0) {
+				throw(new Error('No frequency ranges provided'));
+			}
+
+			/* Compute the total number of frequencies in all ranges */
+			const totalFrequencies = ranges.reduce((sum, range) => {
+				const max = range.max ?? range.min;
+				return sum + (max - range.min + 1);
+			}, 0);
+
+			/* Choose a random frequency index */
+			const randomIndex = Math.floor(Math.random() * totalFrequencies);
+
+			/* Find the corresponding frequency in the ranges */
+			let cumulativeFrequencies = 0;
+			for (const range of ranges) {
+				const max = range.max ?? range.min;
+				const rangeSize = max - range.min + 1;
+
+				if (randomIndex < cumulativeFrequencies + rangeSize) {
+					return(range.min + (randomIndex - cumulativeFrequencies));
+				}
+
+				cumulativeFrequencies += rangeSize;
+			}
+
+			return(ranges[0]!.min);
+		};
+
+		const sessionAllChannelsPower =  randomValue(args.power.min, args.power.max);
+		const sessionAllChannelFrequency = randomFrequency(args.frequency.ranges);
 
 		let crossCouplingFreq: number | undefined = undefined;
-		if (args.couplingMin !== undefined) {
-			crossCouplingFreq = randomValue(args.couplingMin, args.couplingMax);
+		if (args.coupling !== undefined) {
+			crossCouplingFreq = randomValue(args.coupling.min, args.coupling.max);
 		}
 
 		const crossCouplingInfo = (function() {
@@ -567,10 +642,28 @@ export class VielightDevice {
 			"cross": crossCouplingInfo,
 			"modules": new Array(12).fill(null).map(function(_, index) {
 				const applyCross = crossCouplingInfo.active;
-				const distributionA = args.couplingRandomDistribution ?? 50;
+				const distributionA = args.coupling?.distribution ?? 50;
+
 				if (distributionA < 0 || distributionA > 100 || !Number.isSafeInteger(distributionA)) {
 					throw(new Error('invalid cross coupling random distribution'));
 				}
+
+				const modulePower = (function() {
+					if (args.power.perChannel) {
+						return(randomValue(args.power.min, args.power.max));
+					}
+
+					return(sessionAllChannelsPower);
+				})();
+
+				const moduleFrequency = (function() {
+					if (args.frequency.perChannel) {
+						return(randomFrequency(args.frequency.ranges));
+					}
+
+					return(sessionAllChannelFrequency);
+				})();
+
 				return({
 					"module_no": index + 1,
 					"active": true,
@@ -580,8 +673,8 @@ export class VielightDevice {
 						"phase": randomChoice([0, 1]),
 						"dutyCycle": 5
 					},
-					"freq": frequency,
-					"power": randomValue(args.powerMin, args.powerMax),
+					"freq": moduleFrequency,
+					"power": modulePower,
 					"applyCross": randomChoice([applyCross, false], [distributionA, 100 - distributionA])
 				})
 			})

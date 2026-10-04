@@ -117,7 +117,11 @@ test('runRandom reports upload and run events and removes listeners', async func
 		reportedEvents.push('run-random-run-finish-file');
 	});
 
-	await device.runRandom({ duration: 1, freqMin: 10, powerMin: 1 });
+	await device.runRandom({
+		duration: 1,
+		frequency: { ranges: [{ min: 10 }] },
+		power: { min: 1 }
+	});
 
 	assert.deepEqual(reportedEvents, [
 		'run-random-start',
@@ -150,7 +154,11 @@ test('runRandom stops the device and rejects when its signal is aborted', async 
 	});
 
 	await assert.rejects(
-		device.runRandom({ duration: 1, freqMin: 10, powerMin: 1 }, { signal: controller.signal }),
+		device.runRandom({
+			duration: 1,
+			frequency: { ranges: [{ min: 10 }] },
+			power: { min: 1 }
+		}, { signal: controller.signal }),
 		/Session stopped\./
 	);
 	assert.equal(stopRequests, 1);

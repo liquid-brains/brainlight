@@ -45,6 +45,17 @@ function parseIntSafe(value: string | undefined | null): number {
 	return(parsed);
 }
 
+function parseRange(value: string | undefined): { min: number; max?: number; } {
+	const range = nonEmptyString(value).split('...');
+	if (range.length < 1 || range.length > 2) {
+		throw(new Error('Invalid range format'));
+	}
+
+	const min = parseIntSafe(range[0]);
+	const max = range[1] === undefined ? undefined : parseIntSafe(range[1]);
+	return(max === undefined ? { min } : { min, max });
+}
+
 type VielightCLIArgs = {
 	command: 'help'
 } | {
@@ -102,6 +113,9 @@ function parseArgs(args: string[]): VielightCLIArgs {
 		case 'runRandom':
 			let preview = false;
 			const runRandomArgs: Partial<Vielight.VielightRandomParams> = {};
+			let couplingDistribution: number | undefined;
+			let frequencyPerChannel = false;
+			let powerPerChannel: boolean | undefined;
 			let i = 1;
 			while (i < args.length) {
 				const arg = args[i];
@@ -114,45 +128,27 @@ function parseArgs(args: string[]): VielightCLIArgs {
 				} else if (arg === '--freq') {
 					i++;
 					const freqParts = nonEmptyString(args[i]).split('/');
-					if (freqParts.length === 1) {
-						const frequencyRange = nonEmptyString(freqParts[0]).split('...');
-						if (frequencyRange.length < 1 || frequencyRange.length > 2) {
-							throw(new Error('Invalid format for --freq argument'));
-						}
-						runRandomArgs.freqMin = parseIntSafe(frequencyRange[0]);
-						if (frequencyRange[1] !== undefined) {
-							runRandomArgs.freqMax = parseIntSafe(frequencyRange[1]);
-						}
-					} else if (freqParts.length === 2) {
-						const [freqMinStr, freqMaxStr] = freqParts;
-						const frequencyRange = nonEmptyString(freqMinStr).split('...');
-						const couplingRange = nonEmptyString(freqMaxStr).split('...');
-						if (frequencyRange.length < 1 || frequencyRange.length > 2 || couplingRange.length < 1 || couplingRange.length > 2) {
-							throw(new Error('Invalid format for --freq argument'));
-						}
-						runRandomArgs.freqMin = parseIntSafe(frequencyRange[0]);
-						if (frequencyRange[1] !== undefined) {
-							runRandomArgs.freqMax = parseIntSafe(frequencyRange[1]);
-						}
-						runRandomArgs.couplingMin = parseIntSafe(couplingRange[0]);
-						if (couplingRange[1] !== undefined) {
-							runRandomArgs.couplingMax = parseIntSafe(couplingRange[1]);
-						}
-					} else {
+					if (freqParts.length < 1 || freqParts.length > 2) {
 						throw new Error('Invalid format for --freq argument');
+					}
+					runRandomArgs.frequency = {
+						ranges: nonEmptyString(freqParts[0]).split(',').map(parseRange)
+					};
+					if (freqParts[1] !== undefined) {
+						runRandomArgs.coupling = parseRange(freqParts[1]);
 					}
 				} else if (arg === '--power') {
 					i++;
-					const powerParts = nonEmptyString(args[i]).split('...');
-					if (powerParts.length === 1 || powerParts.length === 2) {
-						runRandomArgs.powerMin = parseIntSafe(powerParts[0]);
-						runRandomArgs.powerMax = parseIntSafe(powerParts[1] ?? String(runRandomArgs.powerMin));
-					} else {
-						throw new Error('Invalid format for --power argument');
-					}
+					runRandomArgs.power = parseRange(args[i]);
 				} else if (arg === '--coupling-on-distribution') {
 					i++;
-					runRandomArgs.couplingRandomDistribution = parseIntSafe(args[i]);
+					couplingDistribution = parseIntSafe(args[i]);
+				} else if (arg === '--freq-per-channel') {
+					frequencyPerChannel = true;
+				} else if (arg === '--power-per-channel') {
+					powerPerChannel = true;
+				} else if (arg === '--no-power-per-channel') {
+					powerPerChannel = false;
 				} else if (arg === '--preview') {
 					preview = true;
 				} else {
@@ -161,8 +157,18 @@ function parseArgs(args: string[]): VielightCLIArgs {
 				i++;
 			}
 
-			if (!runRandomArgs.duration || !runRandomArgs.freqMin || !runRandomArgs.powerMin) {
+			if (couplingDistribution !== undefined && runRandomArgs.coupling !== undefined) {
+				runRandomArgs.coupling.distribution = couplingDistribution;
+			}
+
+			if (runRandomArgs.duration === undefined || runRandomArgs.frequency === undefined || runRandomArgs.frequency.ranges.length === 0 || runRandomArgs.power === undefined) {
 				throw(new Error('Missing required arguments for runRandom command'));
+			}
+			if (frequencyPerChannel) {
+				runRandomArgs.frequency.perChannel = true;
+			}
+			if (powerPerChannel !== undefined) {
+				runRandomArgs.power.perChannel = powerPerChannel;
 			}
 
 			return({
@@ -266,7 +272,7 @@ async function main(inputArgs: string[]) {
 			console.log('  save <filename>             Save a file to the device');
 			console.log('  delete <filename>           Delete a file from the device');
 			console.log('  run <filenames...>          Run a sequence of files on the device');
-			console.log('  runRandom [--basename <string>] --duration <minutes> --freq <freqMin[...freqMax]>[/<couplingMin[...couplingMax]>] [--coupling-on-distribution <0...100>] --power <min[...max]>     Run a random sequence of files on the device');
+			console.log('  runRandom [--basename <string>] --duration <minutes> --freq <freqMin[...freqMax][,...]>[/<couplingMin[...couplingMax]>] [--freq-per-channel] [--coupling-on-distribution <0...100>] --power <min[...max]> [--no-power-per-channel]     Run a random sequence of files on the device');
 			break;
 	}
 }
