@@ -155,6 +155,8 @@ type VielightDeviceArgs = {
 	fetch?: (input: URL) => Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<unknown>; }>;
 	/** default: true. If false, the fetch function is assumed to not return any data, and the makeRequest function will not attempt to read the response body. */
 	fetchCanReturnData?: boolean;
+	/** (in milliseconds) default: 30000 */
+	requestTimeout?: number;
 };
 
 export class VielightDevice {
@@ -162,6 +164,7 @@ export class VielightDevice {
 	private logger?: VielightDeviceArgs['logger'] | undefined;
 	private fetch: NonNullable<VielightDeviceArgs['fetch']>;
 	private fetchCanReturnData: NonNullable<VielightDeviceArgs['fetchCanReturnData']>;
+	private requestTimeout: NonNullable<VielightDeviceArgs['requestTimeout']>;
 	private eventListeners = new Map<VielightDeviceEventName, Map<symbol, unknown>>();
 
 	constructor(args: VielightDeviceArgs) {
@@ -171,6 +174,7 @@ export class VielightDevice {
 			return(await fetch(url));
 		};
 		this.fetchCanReturnData = args.fetchCanReturnData ?? true;
+		this.requestTimeout = args.requestTimeout ?? 30_000;
 	}
 
 	on<EventName extends VielightDeviceEventName>(eventName: EventName, listener: VielightDeviceEventListeners[EventName]): symbol {
@@ -215,9 +219,9 @@ export class VielightDevice {
 			}
 		}
 
-		this.logger?.log(`Making request to ${url.toString()}`);
+		this.logger?.log(`Making device request to ${path}`);
 
-		const response = await this.fetch(url);
+		const response = await this.fetchWithTimeout(url);
 
 		if (!response.ok) {
 			throw(new Error(`Request failed with status ${response.status}: ${await response.text()}`));
@@ -236,7 +240,24 @@ export class VielightDevice {
 		}
 
 		return(await response.text());
+	}
 
+	private async fetchWithTimeout(url: URL): Promise<Awaited<ReturnType<NonNullable<VielightDeviceArgs['fetch']>>>> {
+		let timeoutID: ReturnType<typeof setTimeout> | undefined;
+		try {
+			return(await Promise.race([
+				this.fetch(url),
+				new Promise<never>((_, reject): void => {
+					timeoutID = setTimeout((): void => {
+						reject(new Error(`Device request timed out after ${this.requestTimeout / 1000} seconds.`));
+					}, this.requestTimeout);
+				})
+			]));
+		} finally {
+			if (timeoutID !== undefined) {
+				clearTimeout(timeoutID);
+			}
+		}
 	}
 
 	async listFiles(limit?: 'vnp0' | 'vnp2' | 'vnp3' | ('vnp0' | 'vnp2' | 'vnp3')[]): Promise<string[]> {
