@@ -1,4 +1,6 @@
 import { strict as assert } from 'node:assert';
+import { once } from 'node:events';
+import { createServer, type RequestListener, type Server } from 'node:http';
 import test from 'node:test';
 
 import { BrainlightError, VielightDevice } from './index.js';
@@ -113,41 +115,49 @@ test('invalid random sessions fail before device requests or events', async func
 	assert.equal(requestCount, 0);
 });
 
-test('uses the supplied fetch to retrieve files', async function () {
-	const requestedURLs: URL[] = [];
+async function createTestServer(listener: RequestListener): Promise<Server> {
+	const server = createServer(listener);
+	server.listen(0, '127.0.0.1');
+	await once(server, 'listening');
+
+	return(server);
+}
+
+function serverIP(server: Server): string {
+	const address = server.address();
+	if (address === null || typeof address === 'string') {
+		throw(new Error('Test server did not bind to a TCP address.'));
+	}
+
+	return(`127.0.0.1:${address.port}`);
+}
+
+test('retrieves files through an HTTP server', async function () {
+	const requestedURLs: string[] = [];
+	await using server = await createTestServer(function (request, response): void {
+		requestedURLs.push(request.url ?? '');
+		response.setHeader('content-type', 'application/json');
+		response.end(JSON.stringify(['one.vnp0']));
+	});
 	const device = new VielightDevice({
-		ip: '192.0.2.1:8080',
-		fetch: async function (input): Promise<Response> {
-			requestedURLs.push(input);
-			return(new Response(JSON.stringify(['one.vnp0']), { status: 200 }));
-		}
+		ip: serverIP(server)
 	});
 
 	const files = await device.listFiles('vnp0');
 
 	assert.deepEqual(files, ['one.vnp0']);
-	assert.equal(requestedURLs.length, 1);
-	assert.equal(requestedURLs[0]?.toString(), 'http://192.0.2.1:8080/getlistfile?msg=vnp0');
+	assert.deepEqual(requestedURLs, ['/getlistfile?msg=vnp0']);
 });
 
-test('uses a fetch without response data for write-only requests', async function () {
-	const requestedURLs: URL[] = [];
+test('does not require response data for write-only requests', async function () {
+	const requestedURLs: string[] = [];
+	await using server = await createTestServer(function (request, response): void {
+		requestedURLs.push(request.url ?? '');
+		response.end();
+	});
 	const device = new VielightDevice({
-		ip: '127.0.0.1',
-		fetchCanReturnData: false,
-		fetch: async function (input) {
-			requestedURLs.push(input);
-			return({
-				ok: true,
-				status: 200,
-				text: async function (): Promise<string> {
-					assert.fail('Write-only requests must not read response text.');
-				},
-				json: async function (): Promise<unknown> {
-					assert.fail('Write-only requests must not read response JSON.');
-				}
-			});
-		}
+		ip: serverIP(server),
+		fetchCanReturnData: false
 	});
 
 	await device.stop();
@@ -155,53 +165,49 @@ test('uses a fetch without response data for write-only requests', async functio
 	await device.runFile('run.vnp0', { waitForCompletion: false });
 
 	assert.deepEqual(
-		requestedURLs.map(function (url): string {
-			return(url.toString());
-		}),
+		requestedURLs,
 		[
-			'http://127.0.0.1/stop?msg=Stop+button+pressed',
-			'http://127.0.0.1/deletefile?data=old.vnp0',
-			'http://127.0.0.1/stop?msg=Stop+button+pressed',
-			'http://127.0.0.1/filedatarun?data=run.vnp0',
-			'http://127.0.0.1/run?msg=Run+button+pressed'
+			'/stop?msg=Stop+button+pressed',
+			'/deletefile?data=old.vnp0',
+			'/stop?msg=Stop+button+pressed',
+			'/filedatarun?data=run.vnp0',
+			'/run?msg=Run+button+pressed'
 		]
 	);
 });
 
 test('rejects result-reading requests when fetch cannot return data', async function () {
+	const requestedURLs: string[] = [];
+	await using server = await createTestServer(function (request, response): void {
+		requestedURLs.push(request.url ?? '');
+		response.setHeader('content-type', 'application/json');
+		response.end('[]');
+	});
 	const device = new VielightDevice({
-		ip: '127.0.0.1',
-		fetchCanReturnData: false,
-		fetch: async function () {
-			return({
-				ok: true,
-				status: 200,
-				text: async function (): Promise<string> {
-					assert.fail('Successful requests must not read response text before rejecting.');
-				},
-				json: async function (): Promise<unknown> {
-					assert.fail('Successful requests must not read response JSON before rejecting.');
-				}
-			});
-		}
+		ip: serverIP(server),
+		fetchCanReturnData: false
 	});
 
 	await assert.rejects(device.listFiles('vnp0'), /Cannot examine result because fetch cannot return data/);
+	assert.deepEqual(requestedURLs, ['/getlistfile?msg=vnp0']);
 });
 
 test('runRandom reports upload and run events and removes listeners', async function () {
-	const device = new VielightDevice({
-		ip: '127.0.0.1',
-		fetch: async function (input): Promise<Response> {
-			const requestURL = new URL(input);
-			if (requestURL.pathname === '/getlistfile') {
-				return(new Response('[]', { status: 200 }));
-			}
-			if (requestURL.pathname === '/activate') {
-				return(new Response('SPT', { status: 200 }));
-			}
-			return(new Response('', { status: 200 }));
+	await using server = await createTestServer(function (request, response): void {
+		const requestURL = new URL(request.url ?? '/', 'http://localhost');
+		if (requestURL.pathname === '/getlistfile') {
+			response.setHeader('content-type', 'application/json');
+			response.end('[]');
+			return;
 		}
+		if (requestURL.pathname === '/activate') {
+			response.end('SPT');
+			return;
+		}
+		response.end();
+	});
+	const device = new VielightDevice({
+		ip: serverIP(server)
 	});
 	const reportedEvents: string[] = [];
 	const removedListenerID = device.on('run-random-start', function (): void {
@@ -243,22 +249,29 @@ test('runRandom reports upload and run events and removes listeners', async func
 });
 
 test('runRandom stops the device and rejects when its signal is aborted', async function () {
-	const device = new VielightDevice({
-		ip: '127.0.0.1',
-		fetch: async function (input): Promise<Response> {
-			const requestURL = new URL(input);
-			if (requestURL.pathname === '/getlistfile') {
-				return(new Response('[]', { status: 200 }));
-			}
-			if (requestURL.pathname === '/stop') {
-				stopRequests++;
-			}
-			return(new Response('', { status: 200 }));
+	let stopRequests = 0;
+	let stopRequestReceived!: () => void;
+	const stopRequestReceivedPromise = new Promise<void>(function (resolve): void {
+		stopRequestReceived = resolve;
+	});
+	await using server = await createTestServer(function (request, response): void {
+		const requestURL = new URL(request.url ?? '/', 'http://localhost');
+		if (requestURL.pathname === '/getlistfile') {
+			response.setHeader('content-type', 'application/json');
+			response.end('[]');
+			return;
 		}
+		if (requestURL.pathname === '/stop') {
+			stopRequests++;
+			stopRequestReceived();
+		}
+		response.end();
+	});
+	const device = new VielightDevice({
+		ip: serverIP(server)
 	});
 
 	const controller = new AbortController();
-	let stopRequests = 0;
 	device.on('run-random-run-start-file', function (): void {
 		controller.abort();
 	});
@@ -271,5 +284,26 @@ test('runRandom stops the device and rejects when its signal is aborted', async 
 		}, { signal: controller.signal }),
 		/Session stopped\./
 	);
+	await stopRequestReceivedPromise;
 	assert.equal(stopRequests, 1);
+});
+
+test('rejects requests that exceed the configured timeout', async function () {
+	let responseFinished!: () => void;
+	const responseFinishedPromise = new Promise<void>(function (resolve): void {
+		responseFinished = resolve;
+	});
+	await using server = await createTestServer(function (_request, response): void {
+		setTimeout(function (): void {
+			response.end('[]');
+			responseFinished();
+		}, 50);
+	});
+	const device = new VielightDevice({
+		ip: serverIP(server),
+		requestTimeout: 10
+	});
+
+	await assert.rejects(device.listFiles('vnp0'), /Device request timed out after 0.01 seconds\./);
+	await responseFinishedPromise;
 });
