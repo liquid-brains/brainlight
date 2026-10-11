@@ -56,6 +56,26 @@ function parseRange(value: string | undefined): { min: number; max?: number; } {
 	return(max === undefined ? { min } : { min, max });
 }
 
+function parseFrequencyRange(value: string): Vielight.VielightRandomParams['frequency']['ranges'][number] {
+	const parts = value.split(':');
+	if (parts.length > 2) {
+		throw(new Error('Invalid frequency format: expected <min[...max]>[:weight]'));
+	}
+
+	const frequency = nonEmptyString(parts[0]).trim();
+	if (!/^\d+(?:\.\.\.\d+)?$/.test(frequency)) {
+		throw(new Error('Invalid frequency range: expected integer frequencies; use --off-percentage to disable modules'));
+	}
+	const range: Vielight.VielightRandomParams['frequency']['ranges'][number] = parseRange(frequency);
+
+	if (parts[1] !== undefined) {
+		const weight = Number(nonEmptyString(parts[1]));
+		range.weight = weight;
+	}
+
+	return(range);
+}
+
 type VielightCLIArgs = {
 	command: 'help'
 } | {
@@ -114,6 +134,7 @@ function parseArgs(args: string[]): VielightCLIArgs {
 			let preview = false;
 			const runRandomArgs: Partial<Vielight.VielightRandomParams> = {};
 			let couplingDistribution: number | undefined;
+			let offPercentage: number | undefined;
 			let frequencyPerChannel = false;
 			let powerPerChannel: boolean | undefined;
 			let i = 1;
@@ -132,11 +153,14 @@ function parseArgs(args: string[]): VielightCLIArgs {
 						throw new Error('Invalid format for --freq argument');
 					}
 					runRandomArgs.frequency = {
-						ranges: nonEmptyString(freqParts[0]).split(',').map(parseRange)
+						ranges: nonEmptyString(freqParts[0]).split(',').map(parseFrequencyRange)
 					};
 					if (freqParts[1] !== undefined) {
 						runRandomArgs.coupling = parseRange(freqParts[1]);
 					}
+				} else if (arg === '--off-percentage') {
+					i++;
+					offPercentage = Number(nonEmptyString(args[i]));
 				} else if (arg === '--power') {
 					i++;
 					runRandomArgs.power = parseRange(args[i]);
@@ -167,15 +191,20 @@ function parseArgs(args: string[]): VielightCLIArgs {
 			if (frequencyPerChannel) {
 				runRandomArgs.frequency.perChannel = true;
 			}
+			if (offPercentage !== undefined) {
+				runRandomArgs.frequency.offPercentage = offPercentage;
+			}
 			if (powerPerChannel !== undefined) {
 				runRandomArgs.power.perChannel = powerPerChannel;
 			}
 
-			return({
+			const parsedArgs: VielightCLIArgs = {
 				command: 'runRandom',
 				preview: preview,
 				...runRandomArgs as Vielight.VielightRandomParams
-			});
+			};
+			Vielight.VielightDevice.validateRandomParams(parsedArgs);
+			return(parsedArgs);
 		default:
 			if (1+1===2) {
 				return({ command: 'help' });
@@ -272,7 +301,10 @@ async function main(inputArgs: string[]) {
 			console.log('  save <filename>             Save a file to the device');
 			console.log('  delete <filename>           Delete a file from the device');
 			console.log('  run <filenames...>          Run a sequence of files on the device');
-			console.log('  runRandom [--basename <string>] --duration <minutes> --freq <freqMin[...freqMax][,...]>[/<couplingMin[...couplingMax]>] [--freq-per-channel] [--coupling-on-distribution <0...100>] --power <min[...max]> [--no-power-per-channel]     Run a random sequence of files on the device');
+			console.log('  runRandom [--basename <string>] --duration <minutes> --freq <min[...max]>[:weight][,...][/<couplingMin[...couplingMax]>] [--freq-per-channel] [--off-percentage <0...100>] [--coupling-on-distribution <0...100>] --power <min[...max]> [--no-power-per-channel] [--preview]     Run a random sequence of files on the device');
+			console.log('    Frequency weights are relative whole numbers from 0 through 100; omitted weights default to 100 / number of entries. Each range spreads its weight evenly over its frequencies. The total weight must be positive.');
+			console.log('    --off-percentage is a whole number from 0 through 100 (default: 0). Each module independently has this probability of being off, regardless of --freq-per-channel; it is not an exact module count.');
+			console.log('    Example: --freq 10...20:60,40:40/5 --off-percentage 10');
 			break;
 	}
 }

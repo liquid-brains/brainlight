@@ -1,5 +1,11 @@
 #! /usr/bin/env ts-node
 
+import { BrainlightError } from '../errors.js';
+import type { RandomSessionField } from '../errors.js';
+
+export { BrainlightError } from '../errors.js';
+export type { RandomSessionField } from '../errors.js';
+
 function sessionStoppedError(): Error {
 	return(new Error('Session stopped.'));
 }
@@ -63,7 +69,7 @@ export type VielightRandomParams = {
 	 */
 	duration: number;
 	frequency: {
-		ranges: {
+		ranges: (({
 			/**
 			 * Minimum frequency to use within the session
 			 */
@@ -72,7 +78,14 @@ export type VielightRandomParams = {
 			 * Maximum frequency to use within the session (default: same as min)
 			 */
 			max?: number;
-		}[];
+		}) & {
+			weight?: number;
+		})[];
+
+		/**
+		 * Percentage of modules to be off (default: 0, meaning 0%)
+		 */
+		offPercentage?: number;
 
 		/**
 		 * Whether to generate a random frequency per-channel (true) or per session (e.g., minute) (false; default)
@@ -90,6 +103,12 @@ export type VielightRandomParams = {
 		max?: number;
 		/**
 		 * Frequency distribution between cross-channel coupling and no cross-channel coupling (default: 50, meaning 50%)
+		 */
+		distribution?: number;
+	};
+	abCoupling?: {
+		/**
+		 * Probability that a channel will be in Phase A (default: 50, meaning 50%)
 		 */
 		distribution?: number;
 	};
@@ -545,10 +564,89 @@ export class VielightDevice {
 		}
 	}
 
+	/** Returns all field errors without mutating parameters or contacting a device. */
+	static getRandomParamsValidationErrors(args: VielightRandomParams): BrainlightError[] {
+		const errors: BrainlightError[] = [];
+		function checkInteger(value: number, minimum: number, maximum: number, field: RandomSessionField, label: string): void {
+			if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+				errors.push(new BrainlightError(`${label} must be a whole number from ${minimum} through ${maximum}.`, field));
+			}
+		}
+		function checkMaximum(minimum: number, maximum: number | undefined, lower: number, upper: number, field: RandomSessionField, label: string): void {
+			if (maximum === undefined) {
+				return;
+			}
+			checkInteger(maximum, lower, upper, field, `${label} maximum`);
+			if (minimum > maximum) {
+				errors.push(new BrainlightError(`${label} minimum must not exceed maximum.`, field));
+			}
+		}
+
+		if (args.basename !== undefined && (typeof args.basename !== 'string' || args.basename === '' || args.basename.includes('.'))) {
+			errors.push(new BrainlightError('Generated file name prefix must be non-empty and must not contain a period.', 'basename'));
+		}
+		checkInteger(args.duration, 1, 60, 'duration', 'Duration (minutes)');
+		checkInteger(args.power.min, 1, 140, 'power.min', 'Power minimum');
+		checkMaximum(args.power.min, args.power.max, 1, 140, 'power.max', 'Power');
+		if (args.power.perChannel !== undefined && typeof args.power.perChannel !== 'boolean') {
+			errors.push(new BrainlightError('Power per-channel setting must be a boolean.', 'power.perChannel'));
+		}
+		if (args.coupling !== undefined) {
+			checkInteger(args.coupling.min, 0, 100, 'coupling.min', 'Cross-coupling minimum');
+			checkMaximum(args.coupling.min, args.coupling.max, 0, 100, 'coupling.max', 'Cross-coupling');
+			if (args.coupling.distribution !== undefined) {
+				checkInteger(args.coupling.distribution, 0, 100, 'coupling.distribution', 'Cross-coupling distribution (%)');
+			}
+		}
+		if (args.abCoupling?.distribution !== undefined) {
+			checkInteger(args.abCoupling.distribution, 0, 100, 'abCoupling.distribution', 'Phase A probability (%)');
+		}
+		if (args.frequency.perChannel !== undefined && typeof args.frequency.perChannel !== 'boolean') {
+			errors.push(new BrainlightError('Frequency per-channel setting must be a boolean.', 'frequency.perChannel'));
+		}
+		if (args.frequency.offPercentage !== undefined) {
+			checkInteger(args.frequency.offPercentage, 0, 100, 'frequency.offPercentage', 'Modules off probability (%)');
+		}
+		if (args.frequency.ranges.length === 0) {
+			errors.push(new BrainlightError('At least one frequency entry is required.', 'frequency.ranges'));
+		}
+		const defaultWeight = 100 / args.frequency.ranges.length;
+		let totalWeight = 0;
+		for (const [index, range] of args.frequency.ranges.entries()) {
+			if (range.weight !== undefined) {
+				checkInteger(range.weight, 0, 100, `frequency.ranges.${index}.weight`, 'Frequency weight');
+			}
+			totalWeight += range.weight ?? defaultWeight;
+			if ('off' in range) {
+				errors.push(new BrainlightError('Off frequency entries are no longer supported; use frequency.offPercentage.', `frequency.ranges.${index}.off`));
+			}
+			checkInteger(range.min, 1, 9999, `frequency.ranges.${index}.min`, 'Frequency minimum (Hz)');
+			checkMaximum(range.min, range.max, 1, 9999, `frequency.ranges.${index}.max`, 'Frequency');
+		}
+		if (args.frequency.ranges.length > 0 && (!Number.isFinite(totalWeight) || totalWeight <= 0)) {
+			for (const [index] of args.frequency.ranges.entries()) {
+				errors.push(new BrainlightError('Frequency entries must have a positive total weight.', `frequency.ranges.${index}.weight`));
+			}
+		}
+		return(errors);
+	}
+
+	/** Throws the first BrainlightError, with its shared field path, when a session cannot run. */
+	static validateRandomParams(args: VielightRandomParams): void {
+		const error = this.getRandomParamsValidationErrors(args)[0];
+		if (error !== undefined) {
+			throw(error);
+		}
+	}
+
 	static generateRandomParams(filename: string, args: VielightRandomParams) {
+		this.validateRandomParams(args);
 		args.power.perChannel ??= true;
 		args.frequency.perChannel ??= false;
 
+		/**
+		 * Weighted random number generator between min and max (inclusive). If max is undefined, returns min.
+		 */
 		const randomValue = function(min: number, max?: number): number {
 			if (max === undefined) {
 				return(min);
@@ -566,6 +664,14 @@ export class VielightDevice {
 			const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
 			const randomValue = Math.random() * totalWeight;
 
+			if (randomValue === 0 && totalWeight > 0) {
+				for (let i = 0; i < choices.length; i++) {
+					if (weights[i]! > 0) {
+						return(choices[i]!);
+					}
+				}
+			}
+
 			if (choices.length !== weights.length) {
 				throw(new Error('Choices and weights arrays must have the same length'));
 			}
@@ -581,34 +687,33 @@ export class VielightDevice {
 			return(choices[choices.length - 1]!);
 		}
 
-		const randomFrequency = function(ranges: { min: number; max?: number; }[]): number {
+		const randomFrequency = function(ranges: ({ min: number; max?: number; weight?: number; })[]): number {
 			if (ranges.length === 0) {
 				throw(new Error('No frequency ranges provided'));
 			}
 
-			/* Compute the total number of frequencies in all ranges */
-			const totalFrequencies = ranges.reduce((sum, range) => {
-				const max = range.max ?? range.min;
-				return sum + (max - range.min + 1);
-			}, 0);
+			const defaultWeight = 100 / ranges.length;
 
-			/* Choose a random frequency index */
-			const randomIndex = Math.floor(Math.random() * totalFrequencies);
-
-			/* Find the corresponding frequency in the ranges */
-			let cumulativeFrequencies = 0;
+			let choices: number[] = [];
+			let weights: number[] = [];
 			for (const range of ranges) {
-				const max = range.max ?? range.min;
-				const rangeSize = max - range.min + 1;
-
-				if (randomIndex < cumulativeFrequencies + rangeSize) {
-					return(range.min + (randomIndex - cumulativeFrequencies));
+				const min = range.min;
+				const max = range.max ?? min;
+				const spread = max - min + 1;
+				if (min > max) {
+					throw(new Error('Invalid frequency range: min is greater than max'));
 				}
 
-				cumulativeFrequencies += rangeSize;
+				for (let freq = min; freq <= max; freq++) {
+					const freqWeight = (range.weight ?? defaultWeight) / spread;
+					choices.push(freq);
+					weights.push(freqWeight);
+				}
 			}
 
-			return(ranges[0]!.min);
+			const selected = randomChoice(choices, weights);
+
+			return(selected);
 		};
 
 		const sessionAllChannelsPower =  randomValue(args.power.min, args.power.max);
@@ -664,10 +769,7 @@ export class VielightDevice {
 			"modules": new Array(12).fill(null).map(function(_, index) {
 				const applyCross = crossCouplingInfo.active;
 				const distributionA = args.coupling?.distribution ?? 50;
-
-				if (distributionA < 0 || distributionA > 100 || !Number.isSafeInteger(distributionA)) {
-					throw(new Error('invalid cross coupling random distribution'));
-				}
+				const abDistributionA = args.abCoupling?.distribution ?? 50;
 
 				const modulePower = (function() {
 					if (args.power.perChannel) {
@@ -677,32 +779,44 @@ export class VielightDevice {
 					return(sessionAllChannelsPower);
 				})();
 
-				const moduleFrequency = (function() {
+				const { moduleActive, moduleFrequency } = (function() {
+					let moduleFrequency = sessionAllChannelFrequency;
 					if (args.frequency.perChannel) {
-						return(randomFrequency(args.frequency.ranges));
+						moduleFrequency = randomFrequency(args.frequency.ranges);
 					}
 
-					return(sessionAllChannelFrequency);
+					const offPercentage = args.frequency.offPercentage ?? 0;
+					const isOff = randomChoice([true, false], [offPercentage, 100 - offPercentage]);
+
+					if (isOff) {
+						/* XXX:TODO: For an `off` module should we set the frequency to null or 0? */
+						return({ moduleActive: false, moduleFrequency: null });
+					}
+
+					return({ moduleActive: true, moduleFrequency });
 				})();
 
-				return({
+				const retval = {
 					"module_no": index + 1,
-					"active": true,
+					"active": moduleActive,
 					"activeRunTime": 1,
 					"delayStartTime": 0,
 					"moduleControl": {
-						"phase": randomChoice([0, 1]),
+						"phase": randomChoice([0, 1], [abDistributionA, 100 - abDistributionA]),
 						"dutyCycle": 5
 					},
 					"freq": moduleFrequency,
 					"power": modulePower,
 					"applyCross": randomChoice([applyCross, false], [distributionA, 100 - distributionA])
-				})
+				};
+
+				return(retval);
 			})
 		});
 	}
 
 	async runRandom(args: VielightRandomParams, options?: VielightRunOptions) {
+		VielightDevice.validateRandomParams(args);
 		const stopDevice = (): void => {
 			void this.stop().catch(function (): void {
 				/* The local loop still stops when the device is unreachable. */

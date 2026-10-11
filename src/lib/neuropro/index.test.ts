@@ -1,7 +1,117 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { VielightDevice } from './index.js';
+import { BrainlightError, VielightDevice } from './index.js';
+import type { VielightRandomParams, RandomSessionField } from './index.js';
+
+const validRandomParams: VielightRandomParams = {
+	duration: 5,
+	frequency: { ranges: [{ min: 10 }] },
+	power: { min: 1 }
+};
+
+test('random validation reports every invalid field with shared IDs', function () {
+	const errors = VielightDevice.getRandomParamsValidationErrors({
+		basename: 'invalid.name',
+		duration: 0,
+		frequency: { ranges: [{ min: 0, max: 10000, weight: -1 }, { min: 40, weight: 101 }], offPercentage: 101 },
+		power: { min: 0, max: 141 },
+		coupling: { min: -1, max: 101, distribution: 101 },
+		abCoupling: { distribution: -1 }
+	});
+	assert.deepEqual(errors.map(function (error): RandomSessionField { return(error.field); }), [
+		'basename', 'duration', 'power.min', 'power.max',
+		'coupling.min', 'coupling.max', 'coupling.distribution', 'abCoupling.distribution',
+		'frequency.offPercentage', 'frequency.ranges.0.weight', 'frequency.ranges.0.min', 'frequency.ranges.0.max',
+		'frequency.ranges.1.weight'
+	]);
+	assert.ok(errors.every(function (error): boolean { return(BrainlightError.isInstance(error)); }));
+	assert.throws(function (): void {
+		VielightDevice.validateRandomParams({ ...validRandomParams, duration: 0 });
+	}, function (error): boolean {
+		return(BrainlightError.isInstance(error) && error.field === 'duration');
+	});
+});
+
+test('error recognition works across duplicate library class copies', async function () {
+	const duplicateURL = new URL('../errors.js?duplicate', import.meta.url).href;
+	const duplicate: typeof import('../errors.js') = await import(duplicateURL);
+	const error = new duplicate.BrainlightError('Invalid duration.', 'duration');
+	assert.equal(error instanceof BrainlightError, false);
+	assert.equal(BrainlightError.isInstance(error), true);
+	assert.equal(BrainlightError.isInstance(new Error('Invalid duration.')), false);
+	assert.equal(BrainlightError.isInstance(null), false);
+	assert.equal(BrainlightError.isInstance({ field: 'duration', message: 'Invalid duration.' }), false);
+});
+
+test('random validation highlights reversed maxima and all zero weights', function () {
+	const errors = VielightDevice.getRandomParamsValidationErrors({
+		duration: 5,
+		frequency: { ranges: [{ min: 20, max: 10, weight: 0 }, { min: 40, weight: 0 }] },
+		power: { min: 10, max: 1 },
+		coupling: { min: 20, max: 10 }
+	});
+	assert.deepEqual(errors.map(function (error): RandomSessionField { return(error.field); }), [
+		'power.max', 'coupling.max', 'frequency.ranges.0.max',
+		'frequency.ranges.0.weight', 'frequency.ranges.1.weight'
+	]);
+	assert.deepEqual(VielightDevice.getRandomParamsValidationErrors(validRandomParams), []);
+});
+
+test('random validation checks independent off percentages and rejects legacy off entries', function () {
+	for (const offPercentage of [-1, 101, 0.5, NaN, Infinity]) {
+		const args = { ...validRandomParams, frequency: { ranges: [{ min: 10 }], offPercentage } };
+		assert.deepEqual(VielightDevice.getRandomParamsValidationErrors(args).map(error => error.field), ['frequency.offPercentage']);
+		assert.throws(() => VielightDevice.generateRandomParams('test', args), /whole number from 0 through 100/);
+	}
+	for (const offPercentage of [0, 25, 100]) {
+		assert.deepEqual(VielightDevice.getRandomParamsValidationErrors({
+			...validRandomParams, frequency: { ranges: [{ min: 10 }], offPercentage }
+		}), []);
+	}
+	const legacyArgs = {
+		...validRandomParams,
+		frequency: { ranges: [{ min: 10, off: true }] }
+	};
+	assert.deepEqual(VielightDevice.getRandomParamsValidationErrors(legacyArgs).map(error => error.field), ['frequency.ranges.0.off']);
+});
+
+test('off percentage disables modules independently of session-wide frequency', function (context) {
+	let call = 0;
+	context.mock.method(Math, 'random', () => (++call % 2 === 0 ? 0.75 : 0.25));
+	const data = VielightDevice.generateRandomParams('test', {
+		...validRandomParams,
+		frequency: { ranges: [{ min: 10 }, { min: 40 }], offPercentage: 50 },
+		power: { min: 1 }
+	});
+	assert.ok(data.modules.some(module => !module.active));
+	assert.ok(data.modules.some(module => module.active));
+	assert.ok(data.modules.every(module => module.active ? module.freq === 10 : module.freq === null));
+});
+
+test('invalid random sessions fail before device requests or events', async function () {
+	let requestCount = 0;
+	const device = new VielightDevice({
+		ip: '127.0.0.1',
+		fetch: async function (): Promise<Response> {
+			requestCount++;
+			return(new Response(''));
+		}
+	});
+	device.on('run-random-start', function (): void {
+		assert.fail('Invalid session must not start.');
+	});
+	await assert.rejects(device.runRandom({ ...validRandomParams, duration: 0 }), function (error): boolean {
+		return(BrainlightError.isInstance(error) && error.field === 'duration');
+	});
+	await assert.rejects(device.runRandom({
+		...validRandomParams,
+		frequency: { ranges: [{ min: 10 }], offPercentage: 101 }
+	}), function (error): boolean {
+		return(BrainlightError.isInstance(error) && error.field === 'frequency.offPercentage');
+	});
+	assert.equal(requestCount, 0);
+});
 
 test('uses the supplied fetch to retrieve files', async function () {
 	const requestedURLs: URL[] = [];
