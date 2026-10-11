@@ -770,8 +770,15 @@ export class VielightDevice {
 				const applyCross = crossCouplingInfo.active;
 				const distributionA = args.coupling?.distribution ?? 50;
 				const abDistributionA = args.abCoupling?.distribution ?? 50;
+				const offPercentage = args.frequency.offPercentage ?? 0;
+
+				const moduleOff = randomChoice([true, false], [offPercentage, 100 - offPercentage]);
 
 				const modulePower = (function() {
+					if (moduleOff) {
+						return(0);
+					}
+
 					if (args.power.perChannel) {
 						return(randomValue(args.power.min, args.power.max));
 					}
@@ -779,26 +786,23 @@ export class VielightDevice {
 					return(sessionAllChannelsPower);
 				})();
 
-				const { moduleActive, moduleFrequency } = (function() {
+				const moduleFrequency  = (function() {
+					if (moduleOff) {
+						return(0);
+					}
+
 					let moduleFrequency = sessionAllChannelFrequency;
 					if (args.frequency.perChannel) {
 						moduleFrequency = randomFrequency(args.frequency.ranges);
 					}
 
-					const offPercentage = args.frequency.offPercentage ?? 0;
-					const isOff = randomChoice([true, false], [offPercentage, 100 - offPercentage]);
 
-					if (isOff) {
-						/* XXX:TODO: For an `off` module should we set the frequency to null or 0? */
-						return({ moduleActive: false, moduleFrequency: null });
-					}
-
-					return({ moduleActive: true, moduleFrequency });
+					return(moduleFrequency);
 				})();
 
 				const retval = {
 					"module_no": index + 1,
-					"active": moduleActive,
+					"active": true,
 					"activeRunTime": 1,
 					"delayStartTime": 0,
 					"moduleControl": {

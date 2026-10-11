@@ -86,9 +86,10 @@ test('off percentage disables modules independently of session-wide frequency', 
 		frequency: { ranges: [{ min: 10 }, { min: 40 }], offPercentage: 50 },
 		power: { min: 1 }
 	});
-	assert.ok(data.modules.some(module => !module.active));
-	assert.ok(data.modules.some(module => module.active));
-	assert.ok(data.modules.every(module => module.active ? module.freq === 10 : module.freq === null));
+	assert.ok(data.modules.every(module => module.active));
+	assert.ok(data.modules.some(module => module.freq === 0 && module.power === 0));
+	assert.ok(data.modules.some(module => module.freq === 10 && module.power === 1));
+	assert.ok(data.modules.every(module => module.freq === 0 || module.freq === 10));
 });
 
 test('invalid random sessions fail before device requests or events', async function () {
