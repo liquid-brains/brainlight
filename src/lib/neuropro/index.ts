@@ -91,6 +91,11 @@ export type VielightRandomParams = {
 		 * Whether to generate a random frequency per-channel (true) or per session (e.g., minute) (false; default)
 		 */
 		perChannel?: boolean;
+
+		/**
+		 * Select a range by weight, then a uniform frequency within it (default: false, using flattened frequency weights)
+		 */
+		distributeRanges?: boolean;
 	};
 	coupling?: {
 		/**
@@ -604,6 +609,9 @@ export class VielightDevice {
 		if (args.frequency.perChannel !== undefined && typeof args.frequency.perChannel !== 'boolean') {
 			errors.push(new BrainlightError('Frequency per-channel setting must be a boolean.', 'frequency.perChannel'));
 		}
+		if (args.frequency.distributeRanges !== undefined && typeof args.frequency.distributeRanges !== 'boolean') {
+			errors.push(new BrainlightError('Frequency range distribution setting must be a boolean.', 'frequency.distributeRanges'));
+		}
 		if (args.frequency.offPercentage !== undefined) {
 			checkInteger(args.frequency.offPercentage, 0, 100, 'frequency.offPercentage', 'Modules off probability (%)');
 		}
@@ -693,6 +701,11 @@ export class VielightDevice {
 			}
 
 			const defaultWeight = 100 / ranges.length;
+
+			if (args.frequency.distributeRanges) {
+				const range = randomChoice(ranges, ranges.map(range => range.weight ?? defaultWeight));
+				return(randomValue(range.min, range.max));
+			}
 
 			let choices: number[] = [];
 			let weights: number[] = [];

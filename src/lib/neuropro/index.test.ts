@@ -92,6 +92,82 @@ test('off percentage disables modules independently of session-wide frequency', 
 	assert.ok(data.modules.every(module => module.freq === 0 || module.freq === 10));
 });
 
+test('frequency range distribution preserves flattened sampling by default and when false', function (context) {
+	context.mock.method(Math, 'random', () => 0.1);
+	for (const frequency of [
+		{ ranges: [{ min: 10, max: 13, weight: 20 }, { min: 40, max: 49, weight: 80 }] },
+		{ ranges: [{ min: 10, max: 13, weight: 20 }, { min: 40, max: 49, weight: 80 }], distributeRanges: false }
+	]) {
+		const data = VielightDevice.generateRandomParams('test', { ...validRandomParams, frequency });
+		assert.ok(data.modules.every(module => module.freq === 12));
+	}
+});
+
+test('two-level frequency distribution selects weighted ranges then uniform inclusive frequencies', function (context) {
+	let draws: number[] = [];
+	context.mock.method(Math, 'random', () => draws.shift() ?? 0.5);
+	for (const [rangeDraw, frequencyDraw, expected] of [
+		[0, 0, 10],
+		[0.199999, 0.999999, 13],
+		[0.2, 0, 40],
+		[0.999999, 0.999999, 49]
+	] as const) {
+		draws = [rangeDraw, frequencyDraw];
+		const data = VielightDevice.generateRandomParams('test', {
+			...validRandomParams,
+			frequency: {
+				ranges: [{ min: 10, max: 13, weight: 20 }, { min: 40, max: 49, weight: 80 }],
+				distributeRanges: true
+			}
+		});
+		assert.ok(data.modules.every(module => module.freq === expected));
+	}
+});
+
+test('two-level frequency distribution respects zero and omitted weights and singleton ranges', function (context) {
+	let draw = 0;
+	context.mock.method(Math, 'random', () => draw);
+	for (const [rangeDraw, expected] of [[0, 40], [0.49, 40], [0.5, 10], [0.999999, 10]] as const) {
+		draw = rangeDraw;
+		const data = VielightDevice.generateRandomParams('test', {
+			...validRandomParams,
+			frequency: {
+				ranges: [{ min: 1, max: 9999, weight: 0 }, { min: 40 }, { min: 10 }],
+				distributeRanges: true
+			}
+		});
+		assert.ok(data.modules.every(module => module.freq === expected));
+	}
+});
+
+test('two-level frequency distribution applies per channel and preserves disabled modules', function (context) {
+	const draws = [0, 0];
+	for (let index = 0; index < 12; index++) {
+		draws.push(0.5, index % 2 === 0 ? 0.1 : 0.9, 0.999999, 0.5, 0.5);
+	}
+	context.mock.method(Math, 'random', () => draws.shift() ?? 0.5);
+	const frequency = {
+		ranges: [{ min: 10, max: 19 }, { min: 40, max: 49 }],
+		distributeRanges: true,
+		perChannel: true
+	};
+	const data = VielightDevice.generateRandomParams('test', { ...validRandomParams, frequency });
+	assert.deepEqual(data.modules.map(module => module.freq), [19, 49, 19, 49, 19, 49, 19, 49, 19, 49, 19, 49]);
+	const offData = VielightDevice.generateRandomParams('test', {
+		...validRandomParams, frequency: { ...frequency, offPercentage: 100 }
+	});
+	assert.ok(offData.modules.every(module => module.freq === 0 && module.power === 0));
+});
+
+test('random validation rejects non-boolean range distribution settings', function () {
+	const args = {
+		...validRandomParams,
+		frequency: { ...validRandomParams.frequency, distributeRanges: 'true' as unknown as boolean }
+	};
+	assert.deepEqual(VielightDevice.getRandomParamsValidationErrors(args).map(error => error.field), ['frequency.distributeRanges']);
+	assert.throws(() => VielightDevice.generateRandomParams('test', args), /must be a boolean/);
+});
+
 test('invalid random sessions fail before device requests or events', async function () {
 	let requestCount = 0;
 	const device = new VielightDevice({
