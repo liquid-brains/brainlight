@@ -68,6 +68,10 @@ export type VielightRandomParams = {
 	 * Duration of this journey (in minutes)
 	 */
 	duration: number;
+	/**
+	 * Duration of each generated session (in minutes; default: 1)
+	 */
+	sessionDuration?: number;
 	frequency: {
 		ranges: (({
 			/**
@@ -586,6 +590,9 @@ export class VielightDevice {
 			errors.push(new BrainlightError('Generated file name prefix must be non-empty and must not contain a period.', 'basename'));
 		}
 		checkInteger(args.duration, 1, 60, 'duration', 'Duration (minutes)');
+		if (args.sessionDuration !== undefined) {
+			checkInteger(args.sessionDuration, 1, 59, 'sessionDuration', 'Session duration (minutes)');
+		}
 		checkInteger(args.power.min, 1, 140, 'power.min', 'Power minimum');
 		checkMaximum(args.power.min, args.power.max, 1, 140, 'power.max', 'Power');
 		if (args.power.perChannel !== undefined && typeof args.power.perChannel !== 'boolean') {
@@ -803,7 +810,7 @@ export class VielightDevice {
 				const retval = {
 					"module_no": index + 1,
 					"active": true,
-					"activeRunTime": 1,
+					"activeRunTime": args.sessionDuration ?? 1,
 					"delayStartTime": 0,
 					"moduleControl": {
 						"phase": randomChoice([0, 1], [abDistributionA, 100 - abDistributionA]),
@@ -867,7 +874,7 @@ export class VielightDevice {
 									this.logger?.log('Timeout reached');
 								}
 								resolve();
-							}, 65_000);
+							}, (args.sessionDuration ?? 1) * 60_000 + 5_000);
 						}),
 						(async () => {
 							this.emit('run-random-run-start-file', fileEvent);

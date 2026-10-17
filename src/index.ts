@@ -146,6 +146,9 @@ function parseArgs(args: string[]): VielightCLIArgs {
 				} else if (arg === '--duration') {
 					i++;
 					runRandomArgs.duration = parseIntSafe(args[i]);
+				} else if (arg === '--session-duration') {
+					i++;
+					runRandomArgs.sessionDuration = parseIntSafe(args[i]);
 				} else if (arg === '--freq') {
 					i++;
 					const freqParts = nonEmptyString(args[i]).split('/');
@@ -301,7 +304,8 @@ async function main(inputArgs: string[]) {
 			console.log('  save <filename>             Save a file to the device');
 			console.log('  delete <filename>           Delete a file from the device');
 			console.log('  run <filenames...>          Run a sequence of files on the device');
-			console.log('  runRandom [--basename <string>] --duration <minutes> --freq <min[...max]>[:weight][,...][/<couplingMin[...couplingMax]>] [--freq-per-channel] [--off-percentage <0...100>] [--coupling-on-distribution <0...100>] --power <min[...max]> [--no-power-per-channel] [--preview]     Run a random sequence of files on the device');
+			console.log('  runRandom [--basename <string>] --duration <sessions> [--session-duration <minutes>] --freq <min[...max]>[:weight][,...][/<couplingMin[...couplingMax]>] [--freq-per-channel] [--off-percentage <0...100>] [--coupling-on-distribution <0...100>] --power <min[...max]> [--no-power-per-channel] [--preview]     Run a random sequence of files on the device');
+			console.log('    --duration is the number of sessions; --session-duration sets each session length in whole minutes from 1 through 59 (default: 1).');
 			console.log('    Frequency weights are relative whole numbers from 0 through 100; omitted weights default to 100 / number of entries. Each range spreads its weight evenly over its frequencies. The total weight must be positive.');
 			console.log('    --off-percentage is a whole number from 0 through 100 (default: 0). Each module independently has this probability of being off, regardless of --freq-per-channel; it is not an exact module count.');
 			console.log('    Example: --freq 10...20:60,40:40/5 --off-percentage 10');

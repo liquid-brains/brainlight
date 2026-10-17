@@ -2,6 +2,7 @@
 export type RandomSessionField =
 	| 'basename'
 	| 'duration'
+	| 'sessionDuration'
 	| 'frequency.ranges'
 	| 'frequency.perChannel'
 	| 'frequency.offPercentage'
