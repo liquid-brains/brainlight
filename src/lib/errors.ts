@@ -4,6 +4,7 @@ export type RandomSessionField =
 	| 'duration'
 	| 'frequency.ranges'
 	| 'frequency.perChannel'
+	| 'frequency.distributeRanges'
 	| 'frequency.offPercentage'
 	| `frequency.ranges.${number}.${'min' | 'max' | 'off' | 'weight'}`
 	| 'power.min'
