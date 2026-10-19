@@ -65,7 +65,7 @@ function isBatchFile(filename: string, data?: unknown): boolean {
 export type VielightRandomParams = {
 	basename?: string;
 	/**
-	 * Duration of this journey (in minutes)
+	 * Number of sessions in this journey
 	 */
 	duration: number;
 	/**
