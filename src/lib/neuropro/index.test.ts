@@ -35,6 +35,21 @@ test('random validation reports every invalid field with shared IDs', function (
 	});
 });
 
+test('random session duration accepts whole minutes below 60 and defaults to one minute', function () {
+	for (const sessionDuration of [0, 60, 1.5, NaN, Infinity]) {
+		const args = { ...validRandomParams, sessionDuration };
+		assert.deepEqual(VielightDevice.getRandomParamsValidationErrors(args).map(error => error.field), ['sessionDuration']);
+		assert.throws(() => VielightDevice.generateRandomParams('test', args), /whole number from 1 through 59/);
+	}
+
+	const defaultData = VielightDevice.generateRandomParams('test', validRandomParams);
+	assert.ok(defaultData.modules.every(module => module.activeRunTime === 1));
+	for (const sessionDuration of [1, 59]) {
+		const data = VielightDevice.generateRandomParams('test', { ...validRandomParams, sessionDuration });
+		assert.ok(data.modules.every(module => module.activeRunTime === sessionDuration));
+	}
+});
+
 test('error recognition works across duplicate library class copies', async function () {
 	const duplicateURL = new URL('../errors.js?duplicate', import.meta.url).href;
 	const duplicate: typeof import('../errors.js') = await import(duplicateURL);
@@ -292,15 +307,16 @@ test('runRandom reports upload and run events and removes listeners', async func
 	});
 	device.off(removedListenerID);
 	device.on('run-random-start', function (event): void {
-		assert.equal(event.fileCount, 1);
+		assert.equal(event.fileCount, 2);
 		reportedEvents.push('run-random-start');
 	});
 	device.on('run-random-upload-start-file', function (event): void {
-		assert.equal(event.fileIndex, 1);
+		assert.equal(event.fileCount, 2);
 		reportedEvents.push('run-random-upload-start-file');
 	});
 	device.on('run-randomupload-finish-file', function (event): void {
 		assert.equal(event.data.modules instanceof Array, true);
+		assert.ok((event.data.modules as { activeRunTime: number }[]).every(module => module.activeRunTime === 5));
 		reportedEvents.push('run-randomupload-finish-file');
 	});
 	device.on('run-random-run-start-file', function (): void {
@@ -311,7 +327,8 @@ test('runRandom reports upload and run events and removes listeners', async func
 	});
 
 	await device.runRandom({
-		duration: 1,
+		duration: 2,
+		sessionDuration: 5,
 		frequency: { ranges: [{ min: 10 }] },
 		power: { min: 1 }
 	});
@@ -320,6 +337,10 @@ test('runRandom reports upload and run events and removes listeners', async func
 		'run-random-start',
 		'run-random-upload-start-file',
 		'run-randomupload-finish-file',
+		'run-random-upload-start-file',
+		'run-randomupload-finish-file',
+		'run-random-run-start-file',
+		'run-random-run-finish-file',
 		'run-random-run-start-file',
 		'run-random-run-finish-file'
 	]);
