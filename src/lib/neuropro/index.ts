@@ -416,6 +416,10 @@ export class VielightDevice {
 	}
 
 	async saveFile(filename: string, data: unknown, force = false) {
+		if (filename.replace(/\.vnp[0-9]$/, '').includes('.')) {
+			throw(new Error('invalid filename: filename cannot contain dots'));
+		}
+
 		if (typeof data !== 'object' || data === null) {
 			throw(new Error('invalid data: not an object'));
 		}
