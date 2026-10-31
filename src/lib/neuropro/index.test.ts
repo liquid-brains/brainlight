@@ -241,6 +241,31 @@ test('retrieves files through an HTTP server', async function () {
 	assert.deepEqual(requestedURLs, ['/getlistfile?msg=vnp0']);
 });
 
+test('rejects dots in saved filename basenames but allows the file extension', async function () {
+	const requestedURLs: string[] = [];
+	await using server = await createTestServer(function (request, response): void {
+		requestedURLs.push(request.url ?? '');
+		if (request.url?.startsWith('/getlistfile')) {
+			response.setHeader('content-type', 'application/json');
+			response.end('[]');
+			return;
+		}
+		response.end();
+	});
+	const device = new VielightDevice({
+		ip: serverIP(server)
+	});
+
+	await assert.rejects(
+		device.saveFile('invalid.name.vnp0', { filename: 'invalid.name', single: true }),
+		/filename cannot contain dots/
+	);
+	assert.deepEqual(requestedURLs, []);
+
+	await device.saveFile('valid.vnp0', { filename: 'valid', single: true });
+	assert.equal(requestedURLs[0], '/filename?data=valid.vnp0');
+});
+
 test('does not require response data for write-only requests', async function () {
 	const requestedURLs: string[] = [];
 	await using server = await createTestServer(function (request, response): void {
