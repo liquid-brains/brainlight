@@ -509,26 +509,41 @@ export class VielightDevice {
 
 		this.throwIfStopped(options?.signal);
 		let isFreq = false;
+		let isPower = false;
 		try {
 			const fileData = await this.makeRequest('filedatarun', { jsonResult: true, query: { data: filename } });
 
-			if (typeof fileData === 'object' && fileData !== null && 'frequency' in fileData) {
-				if (typeof fileData.frequency === 'object' && fileData.frequency !== null && 'active' in fileData.frequency) {
-					if (fileData.frequency.active === true) {
-						isFreq = true;
+			if (typeof fileData === 'object' && fileData !== null) {
+				if ('frequency' in fileData) {
+					if (typeof fileData.frequency === 'object' && fileData.frequency !== null && 'active' in fileData.frequency) {
+						if (fileData.frequency.active === true) {
+							isFreq = true;
+						}
+					}
+				}
+
+				if ('power' in fileData) {
+					if (typeof fileData.power === 'object' && fileData.power !== null && 'active' in fileData.power) {
+						if (fileData.power.active === true) {
+							isPower = true;
+						}
 					}
 				}
 			}
 		} catch {
+			this.throwIfStopped(options?.signal);
+
 			this.logger?.log(`File ${filename} not able to be fetched, assuming it is not a frequency file`);
 		}
 
 		await asleep(100, options?.signal);
 		this.throwIfStopped(options?.signal);
 
-		let cmd: 'run' | 'runFreq' = 'run';
+		let cmd: 'run' | 'runFreq' | 'runPower' = 'run';
 		if (isFreq) {
 			cmd = 'runFreq';
+		} else if (isPower) {
+			cmd = 'runPower';
 		}
 
 		await this.makeRequest(cmd, { examineResult: false, query: { msg: 'Run button pressed' } });
