@@ -531,6 +531,8 @@ export class VielightDevice {
 				}
 			}
 		} catch {
+			this.throwIfStopped(options?.signal);
+
 			this.logger?.log(`File ${filename} not able to be fetched, assuming it is not a frequency file`);
 		}
 
