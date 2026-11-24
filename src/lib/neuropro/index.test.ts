@@ -18,7 +18,7 @@ test('random validation reports every invalid field with shared IDs', function (
 		duration: 0,
 		frequency: { ranges: [{ min: 0, max: 10000, weight: -1 }, { min: 40, weight: 101 }], offPercentage: 101 },
 		power: { min: 0, max: 141 },
-		coupling: { min: -1, max: 101, distribution: 101 },
+		coupling: { min: 0, max: 10000, distribution: 101 },
 		abCoupling: { distribution: -1 }
 	});
 	assert.deepEqual(errors.map(function (error): RandomSessionField { return(error.field); }), [
