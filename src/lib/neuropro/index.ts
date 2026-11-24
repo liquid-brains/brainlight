@@ -641,8 +641,8 @@ export class VielightDevice {
 			errors.push(new BrainlightError('Power per-channel setting must be a boolean.', 'power.perChannel'));
 		}
 		if (args.coupling !== undefined) {
-			checkInteger(args.coupling.min, 0, 100, 'coupling.min', 'Cross-coupling minimum');
-			checkMaximum(args.coupling.min, args.coupling.max, 0, 100, 'coupling.max', 'Cross-coupling');
+			checkInteger(args.coupling.min, 1, 9999, 'coupling.min', 'Cross-coupling minimum');
+			checkMaximum(args.coupling.min, args.coupling.max, 1, 9999, 'coupling.max', 'Cross-coupling');
 			if (args.coupling.distribution !== undefined) {
 				checkInteger(args.coupling.distribution, 0, 100, 'coupling.distribution', 'Cross-coupling distribution (%)');
 			}
